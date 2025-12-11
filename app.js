@@ -712,6 +712,7 @@ function attachSuggestionDropdown(inputEl, dropdownEl, valuesProvider) {
   inputEl.addEventListener("input", handleInput);
   inputEl.addEventListener("blur", hide);
   dropdownEl.addEventListener("mousedown", (e) => e.preventDefault());
+  dropdownEl.addEventListener("touchstart", (e) => e.preventDefault());
   dropdownEl.addEventListener("mouseleave", hide);
 }
 
