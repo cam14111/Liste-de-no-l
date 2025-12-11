@@ -4,7 +4,6 @@ const form = document.getElementById("giftForm");
 const giftListEl = document.getElementById("giftList");
 const tabs = document.querySelectorAll(".tab");
 const panels = document.querySelectorAll(".panel");
-const installBtn = document.getElementById("installBtn");
 const snackbar = document.getElementById("snackbar");
 const confirmDialog = document.getElementById("confirmDialog");
 const confirmMessage = document.getElementById("confirmMessage");
@@ -28,7 +27,6 @@ const newLocationInput = document.getElementById("newLocationInput");
 const recipientTagList = document.getElementById("recipientTagList");
 const locationTagList = document.getElementById("locationTagList");
 
-let deferredPrompt = null;
 let state = {
   gifts: [],
   editingId: null,
@@ -122,16 +120,17 @@ function bindEvents() {
 
   form.addEventListener("submit", handleSubmit);
 
-  installBtn.addEventListener("click", handleInstallClick);
+  if (installBtn) { installBtn.addEventListener("click", handleInstallClick); }
   window.addEventListener("beforeinstallprompt", (e) => {
+    if (!installBtn) return;
     e.preventDefault();
     deferredPrompt = e;
-    installBtn.style.display = "inline-flex";
+    if (installBtn) installBtn.style.display = "inline-flex";
   });
 
   window.addEventListener("appinstalled", () => {
     deferredPrompt = null;
-    installBtn.style.display = "none";
+    if (installBtn) installBtn.style.display = "none";
     showMessage("Application installée !");
   });
 
