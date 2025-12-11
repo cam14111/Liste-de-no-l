@@ -10,10 +10,8 @@ const confirmMessage = document.getElementById("confirmMessage");
 const confirmOk = document.getElementById("confirmOk");
 const confirmCancel = document.getElementById("confirmCancel");
 const confirmClose = document.getElementById("confirmClose");
-const recipientSuggestions = document.getElementById("recipientSuggestions");
-const locationSuggestions = document.getElementById("locationSuggestions");
-const recipientSuggestionsList = document.getElementById("recipientSuggestionsList");
-const locationSuggestionsList = document.getElementById("locationSuggestionsList");
+const recipientSelect = document.getElementById("recipient");
+const locationSelect = document.getElementById("location");
 
 const filterRecipient = document.getElementById("filterRecipient");
 const filterLocation = document.getElementById("filterLocation");
@@ -121,9 +119,6 @@ function bindEvents() {
   });
 
   form.addEventListener("submit", handleSubmit);
-
-  attachSuggestionDropdown(form.recipient, recipientSuggestionsList, () => Array.from(getRecipientsSet()));
-  attachSuggestionDropdown(form.location, locationSuggestionsList, () => Array.from(getLocationsSet()));
 
   document.getElementById("addRecipientBtn").addEventListener("click", () => {
     addListItem("recipients", newRecipientInput.value);
@@ -365,17 +360,6 @@ function populateSelect(select, items) {
   select.value = currentValue;
 }
 
-function populateDatalist(datalist, items) {
-  if (!datalist) return;
-  datalist.innerHTML = "";
-  Array.from(items)
-    .sort()
-    .forEach((item) => {
-      const option = document.createElement("option");
-      option.value = item;
-      datalist.appendChild(option);
-    });
-}
 
 function applyFilters(list) {
   return list.filter((gift) => {
@@ -443,10 +427,34 @@ function groupByKey(list, key, fallbackLabel) {
 function renderManagedLists() {
   const recipientsSet = getRecipientsSet();
   const locationsSet = getLocationsSet();
-  populateDatalist(recipientSuggestions, recipientsSet);
-  populateDatalist(locationSuggestions, locationsSet);
+  populateFormSelect(recipientSelect, recipientsSet, "-- Sélectionner un nom --");
+  populateFormSelect(locationSelect, locationsSet, "-- Sélectionner un lieu --");
   renderTagList(recipientTagList, state.recipients, "recipients");
   renderTagList(locationTagList, state.locations, "locations");
+}
+
+function populateFormSelect(select, items, placeholder) {
+  if (!select) return;
+  const currentValue = select.value;
+  select.innerHTML = "";
+
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = placeholder;
+  select.appendChild(defaultOption);
+
+  Array.from(items)
+    .sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }))
+    .forEach((item) => {
+      const option = document.createElement("option");
+      option.value = item;
+      option.textContent = item;
+      select.appendChild(option);
+    });
+
+  if (currentValue && Array.from(items).includes(currentValue)) {
+    select.value = currentValue;
+  }
 }
 
 function renderTagList(container, items, type) {
@@ -649,81 +657,6 @@ function buildBadge(type, value, giftId) {
   const tone = statusTone[type]?.[value] || "";
   const ariaLabel = `${statusFieldLabels[type] || "Statut"}: ${label}. Cliquer pour changer`;
   return `<span class="badge ${tone || ""} status-badge" role="button" tabindex="0" data-type="${type}" data-id="${giftId}" data-value="${value}" aria-label="${ariaLabel}">${label}</span>`;
-}
-
-function attachSuggestionDropdown(inputEl, dropdownEl, valuesProvider) {
-  if (!inputEl || !dropdownEl || typeof valuesProvider !== "function") return;
-
-  let hideTimeout;
-  let isSelecting = false;
-
-  function selectValue(val) {
-    isSelecting = false;
-    inputEl.value = val;
-    dropdownEl.classList.remove("show");
-    inputEl.focus();
-  }
-
-  function hide() {
-    hideTimeout = setTimeout(() => {
-      if (!isSelecting) {
-        dropdownEl.classList.remove("show");
-      }
-    }, 150);
-  }
-
-  function show(filtered) {
-    clearTimeout(hideTimeout);
-    dropdownEl.innerHTML = "";
-    const values = filtered && filtered.length ? filtered : [];
-    if (!values.length) {
-      const empty = document.createElement("div");
-      empty.className = "suggestion-empty";
-      empty.textContent = "Aucune suggestion";
-      dropdownEl.appendChild(empty);
-    } else {
-      values.forEach((val) => {
-        const item = document.createElement("div");
-        item.className = "suggestion-item";
-        item.tabIndex = 0;
-        item.textContent = val;
-        item.addEventListener("mousedown", (e) => {
-          e.preventDefault();
-          isSelecting = true;
-        });
-        item.addEventListener("touchstart", () => {
-          isSelecting = true;
-        }, { passive: true });
-        item.addEventListener("click", () => selectValue(val));
-        item.addEventListener("touchend", (e) => {
-          e.preventDefault();
-          selectValue(val);
-        });
-        item.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") {
-            selectValue(val);
-          }
-        });
-        dropdownEl.appendChild(item);
-      });
-    }
-    dropdownEl.classList.add("show");
-  }
-
-  function handleInput() {
-    const query = inputEl.value.trim().toLowerCase();
-    const values = valuesProvider()
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }));
-    const filtered = query ? values.filter((v) => v.toLowerCase().includes(query)) : values;
-    show(filtered);
-  }
-
-  inputEl.addEventListener("focus", handleInput);
-  inputEl.addEventListener("input", handleInput);
-  inputEl.addEventListener("blur", hide);
-  dropdownEl.addEventListener("mousedown", (e) => e.preventDefault());
-  dropdownEl.addEventListener("mouseleave", hide);
 }
 
 function populateForm(id) {
