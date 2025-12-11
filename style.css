@@ -293,6 +293,7 @@ select option:disabled {
   justify-content: space-between;
   align-items: flex-start;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .gift-card .title {
@@ -397,6 +398,7 @@ select option:disabled {
   flex-direction: row;
   align-items: center;
   gap: 6px;
+  margin-left: auto;
 }
 
 .gift-actions .ghost-btn {
@@ -715,10 +717,6 @@ select option:disabled {
 
   .panel {
     padding: 12px;
-  }
-
-  .gift-card .header {
-    flex-direction: column;
   }
 
   .gift-list {
