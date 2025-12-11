@@ -393,6 +393,43 @@ select option:disabled {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.suggestions-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: rgba(15, 61, 62, 0.95);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  max-height: 200px;
+  overflow-y: auto;
+  display: none;
+  z-index: 12;
+}
+
+.suggestions-dropdown.show {
+  display: block;
+}
+
+.suggestion-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.suggestion-item:hover,
+.suggestion-item:focus {
+  background: rgba(115, 255, 198, 0.08);
+  outline: none;
+}
+
+.suggestion-empty {
+  padding: 10px 12px;
+  color: var(--muted);
+}
+
 .gift-actions {
   display: flex;
   flex-direction: row;

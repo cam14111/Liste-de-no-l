@@ -12,6 +12,8 @@ const confirmCancel = document.getElementById("confirmCancel");
 const confirmClose = document.getElementById("confirmClose");
 const recipientSuggestions = document.getElementById("recipientSuggestions");
 const locationSuggestions = document.getElementById("locationSuggestions");
+const recipientSuggestionsList = document.getElementById("recipientSuggestionsList");
+const locationSuggestionsList = document.getElementById("locationSuggestionsList");
 
 const filterRecipient = document.getElementById("filterRecipient");
 const filterLocation = document.getElementById("filterLocation");
@@ -119,6 +121,9 @@ function bindEvents() {
   });
 
   form.addEventListener("submit", handleSubmit);
+
+  attachSuggestionDropdown(form.recipient, recipientSuggestionsList, () => Array.from(getRecipientsSet()));
+  attachSuggestionDropdown(form.location, locationSuggestionsList, () => Array.from(getLocationsSet()));
 
   document.getElementById("addRecipientBtn").addEventListener("click", () => {
     addListItem("recipients", newRecipientInput.value);
@@ -644,6 +649,64 @@ function buildBadge(type, value, giftId) {
   const tone = statusTone[type]?.[value] || "";
   const ariaLabel = `${statusFieldLabels[type] || "Statut"}: ${label}. Cliquer pour changer`;
   return `<span class="badge ${tone || ""} status-badge" role="button" tabindex="0" data-type="${type}" data-id="${giftId}" data-value="${value}" aria-label="${ariaLabel}">${label}</span>`;
+}
+
+function attachSuggestionDropdown(inputEl, dropdownEl, valuesProvider) {
+  if (!inputEl || !dropdownEl || typeof valuesProvider !== "function") return;
+
+  let hideTimeout;
+
+  function hide() {
+    hideTimeout = setTimeout(() => dropdownEl.classList.remove("show"), 120);
+  }
+
+  function show(filtered) {
+    clearTimeout(hideTimeout);
+    dropdownEl.innerHTML = "";
+    const values = filtered && filtered.length ? filtered : [];
+    if (!values.length) {
+      const empty = document.createElement("div");
+      empty.className = "suggestion-empty";
+      empty.textContent = "Aucune suggestion";
+      dropdownEl.appendChild(empty);
+    } else {
+      values.forEach((val) => {
+        const item = document.createElement("div");
+        item.className = "suggestion-item";
+        item.tabIndex = 0;
+        item.textContent = val;
+        item.addEventListener("mousedown", (e) => e.preventDefault());
+        item.addEventListener("click", () => {
+          inputEl.value = val;
+          dropdownEl.classList.remove("show");
+        });
+        item.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            inputEl.value = val;
+            dropdownEl.classList.remove("show");
+            inputEl.focus();
+          }
+        });
+        dropdownEl.appendChild(item);
+      });
+    }
+    dropdownEl.classList.add("show");
+  }
+
+  function handleInput() {
+    const query = inputEl.value.trim().toLowerCase();
+    const values = valuesProvider()
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }));
+    const filtered = query ? values.filter((v) => v.toLowerCase().includes(query)) : values;
+    show(filtered);
+  }
+
+  inputEl.addEventListener("focus", handleInput);
+  inputEl.addEventListener("input", handleInput);
+  inputEl.addEventListener("blur", hide);
+  dropdownEl.addEventListener("mousedown", (e) => e.preventDefault());
+  dropdownEl.addEventListener("mouseleave", hide);
 }
 
 function populateForm(id) {
