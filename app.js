@@ -680,6 +680,12 @@ function attachSuggestionDropdown(inputEl, dropdownEl, valuesProvider) {
           inputEl.value = val;
           dropdownEl.classList.remove("show");
         });
+        item.addEventListener("touchend", (e) => {
+          e.preventDefault();
+          inputEl.value = val;
+          dropdownEl.classList.remove("show");
+          inputEl.focus();
+        });
         item.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
             inputEl.value = val;
