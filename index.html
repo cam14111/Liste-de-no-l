@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestion des achats de Noël</title>
+  <meta name="description" content="Suivi des cadeaux de Noël - achats, livraisons, emballages et budget.">
+  <meta name="theme-color" content="#0f3d3e">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230f3d3e'/%3E%3Cpath d='M20 20h24v24H20z' fill='%2373ffc6'/%3E%3Cpath d='M18 30h28v4H18zM30 18h4v28h-4z' fill='%2300c389'/%3E%3Ccircle cx='32' cy='12' r='6' fill='%23ff7a6a'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="page">
+    <header class="app-header">
+      <div class="brand">
+        <div class="logo">🎄</div>
+        <div class="brand-text">
+          <strong>Atelier Noël</strong>
+          <small>Suivi des cadeaux</small>
+        </div>
+      </div>
+      <div class="header-actions">
+        <nav class="tabs" role="tablist">
+          <button class="tab active" data-target="listPanel" role="tab" aria-controls="listPanel" aria-label="Liste">
+            <span class="tab-icon" aria-hidden="true">📋</span>
+          </button>
+          <button class="tab" data-target="dashboardPanel" role="tab" aria-controls="dashboardPanel" aria-label="Tableau de bord">
+            <span class="tab-icon" aria-hidden="true">📊</span>
+          </button>
+        </nav>
+        <button id="installBtn" class="ghost-btn" aria-label="Installer l'application">Ajouter à l'écran d'accueil</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="listPanel" class="panel active" role="tabpanel">
+        <div class="panel-header">
+          <div>
+            <h2>Liste des cadeaux</h2>
+          </div>
+          <button id="goToFormBtn" class="primary-btn">+ Ajouter</button>
+        </div>
+
+        <div class="filters">
+          <label>
+            Nom
+            <select id="filterRecipient">
+              <option value="">Tous</option>
+            </select>
+          </label>
+          <label>
+            Lieu
+            <select id="filterLocation">
+              <option value="">Tous</option>
+            </select>
+          </label>
+          <label>
+            Achat
+            <select id="filterPurchase">
+              <option value="">Tous</option>
+              <option value="to_buy">À acheter</option>
+              <option value="bought">Acheté</option>
+            </select>
+          </label>
+          <label>
+            Livraison
+            <select id="filterDelivery">
+              <option value="">Tous</option>
+              <option value="none">Non commandé</option>
+              <option value="transit">En transit</option>
+              <option value="delivered">Livré</option>
+              <option value="na">Aucun besoin</option>
+            </select>
+          </label>
+          <label>
+            Emballage
+            <select id="filterWrap">
+              <option value="">Tous</option>
+              <option value="not_wrapped">Pas emballé</option>
+              <option value="wrapped">Emballé</option>
+            </select>
+          </label>
+          <label>
+            Trier par
+            <select id="sortGifts">
+              <option value="">Par défaut</option>
+              <option value="progress_desc">Progression</option>
+              <option value="name_asc">Nom</option>
+              <option value="location_asc">Lieu</option>
+            </select>
+          </label>
+          <button id="clearFiltersBtn" class="ghost-btn">Effacer les filtres</button>
+        </div>
+
+        <div class="card list-progress-card">
+          <div class="progress-text">
+            <div>
+              <p class="eyebrow">Avancement global</p>
+            </div>
+            <strong id="listOverallPercent">0%</strong>
+          </div>
+          <div class="progress-bar">
+            <div id="listProgressFill" class="progress-fill" style="width:0%;"></div>
+          </div>
+          <p class="muted" id="listProgressDetail">Basé sur tous les cadeaux.</p>
+        </div>
+
+        <div id="giftList" class="gift-list"></div>
+      </section>
+
+      <section id="formPanel" class="panel" role="tabpanel">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Création</p>
+            <h2>Ajouter ou modifier un cadeau</h2>
+          </div>
+        </div>
+        <form id="giftForm" class="form">
+          <input type="hidden" id="giftId">
+          <div class="field">
+            <label for="recipient">Nom *</label>
+            <input id="recipient" name="recipient" type="text" list="recipientSuggestions" required placeholder="Choisir dans la liste">
+            <datalist id="recipientSuggestions"></datalist>
+          </div>
+          <div class="field">
+            <label for="location">Lieu *</label>
+            <input id="location" name="location" type="text" list="locationSuggestions" required placeholder="Choisir dans la liste">
+            <datalist id="locationSuggestions"></datalist>
+          </div>
+          <div class="field">
+            <label for="giftName">Cadeau *</label>
+            <input id="giftName" name="giftName" type="text" required placeholder="Ex: Livre de recettes">
+          </div>
+          <div class="field">
+            <label for="price">Prix (EUR)</label>
+            <input id="price" name="price" type="number" min="0" step="0.01" placeholder="0.00">
+          </div>
+          <div class="field">
+            <label for="purchaseStatus">Statut d'achat</label>
+            <select id="purchaseStatus" name="purchaseStatus">
+              <option value="to_buy">À acheter</option>
+              <option value="bought">Acheté</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="deliveryStatus">Statut de livraison</label>
+            <select id="deliveryStatus" name="deliveryStatus">
+              <option value="none">Non commandé</option>
+              <option value="transit">En transit</option>
+              <option value="delivered">Livré</option>
+              <option value="na">Aucun besoin</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="wrapStatus">Statut d'emballage</label>
+            <select id="wrapStatus" name="wrapStatus">
+              <option value="not_wrapped">Pas emballé</option>
+              <option value="wrapped">Emballé</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="link">Lien du produit (optionnel)</label>
+            <input id="link" name="link" type="url" placeholder="https://...">
+          </div>
+          <div class="field full">
+            <label for="notes">Notes (optionnel)</label>
+            <textarea id="notes" name="notes" rows="3" placeholder="Tailles, codes promo, idées..."></textarea>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="primary-btn" id="submitBtn">Enregistrer</button>
+            <button type="button" class="ghost-btn" id="resetFormBtn">Réinitialiser</button>
+          </div>
+        </form>
+
+        <div class="list-manager card">
+          <div class="list-manager-header">
+            <div>
+              <p class="eyebrow">Listes maîtres</p>
+              <h3>Gérer les noms et lieux</h3>
+            </div>
+            <p class="muted">Ajoute ou supprime des entrées prédéfinies pour alimenter le formulaire et les filtres.</p>
+          </div>
+          <div class="list-manager-grid">
+            <div class="list-block">
+              <div class="inline-add">
+                <input id="newRecipientInput" type="text" placeholder="Nouveau nom">
+                <button id="addRecipientBtn" class="ghost-btn" type="button">Ajouter</button>
+              </div>
+              <div id="recipientTagList" class="tag-list"></div>
+            </div>
+            <div class="list-block">
+              <div class="inline-add">
+                <input id="newLocationInput" type="text" placeholder="Nouveau lieu">
+                <button id="addLocationBtn" class="ghost-btn" type="button">Ajouter</button>
+              </div>
+              <div id="locationTagList" class="tag-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="dashboardPanel" class="panel" role="tabpanel">
+        <div class="panel-header">
+          <div>
+            <h2>Tableau de bord</h2>
+          </div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="card stat">
+            <p class="label">Total prévu</p>
+            <p class="value" id="plannedTotal">0 €</p>
+          </div>
+          <div class="card stat">
+            <p class="label">Dépenses</p>
+            <p class="value" id="spentTotal">0 €</p>
+          </div>
+          <div class="card stat">
+            <p class="label">Différence</p>
+            <p class="value" id="differenceTotal">0 €</p>
+          </div>
+          <div class="card stat">
+            <p class="label">% achetés</p>
+            <p class="value" id="purchasePercent">0%</p>
+          </div>
+          <div class="card stat">
+            <p class="label">% livrés</p>
+            <p class="value" id="deliveryPercent">0%</p>
+          </div>
+          <div class="card stat">
+            <p class="label">% emballés</p>
+            <p class="value" id="wrapPercent">0%</p>
+          </div>
+        </div>
+
+        <div class="progress-block">
+          <div class="progress-text">
+            <p>Avancement global</p>
+            <span id="overallPercent">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div id="progressFill" class="progress-fill" style="width:0%;"></div>
+          </div>
+        </div>
+
+        <div class="charts-grid">
+          <div class="card chart-card">
+            <div class="card-header">
+              <h3>État des achats</h3>
+            </div>
+            <canvas id="purchaseChart" height="200"></canvas>
+          </div>
+          <div class="card chart-card">
+            <div class="card-header">
+              <h3>Coûts par personne</h3>
+              <div class="chart-actions">
+                <select id="costSort" aria-label="Trier les coûts">
+                  <option value="name">Nom</option>
+                  <option value="amount">Montant</option>
+                </select>
+              </div>
+            </div>
+            <canvas id="costChart" height="200"></canvas>
+          </div>
+          <div class="card chart-card">
+            <div class="card-header">
+              <h3>Cadeaux par lieu</h3>
+              <div class="chart-actions">
+                <select id="locationSort" aria-label="Trier les cadeaux">
+                  <option value="name">Nom</option>
+                  <option value="count">Nombre</option>
+                </select>
+              </div>
+            </div>
+            <canvas id="giftLocationChart" height="220"></canvas>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="snackbar" class="snackbar" role="status" aria-live="polite"></div>
+  <div id="confirmDialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="confirmTitle">Confirmer</h3>
+        <button id="confirmClose" class="modal-close" type="button" aria-label="Fermer la confirmation">×</button>
+      </div>
+      <p id="confirmMessage">Supprimer ce cadeau ?</p>
+      <div class="modal-actions">
+        <button id="confirmCancel" class="ghost-btn" type="button">Annuler</button>
+        <button id="confirmOk" class="primary-btn" type="button">Supprimer</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="charts.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
