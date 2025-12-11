@@ -120,20 +120,6 @@ function bindEvents() {
 
   form.addEventListener("submit", handleSubmit);
 
-  if (installBtn) { installBtn.addEventListener("click", handleInstallClick); }
-  window.addEventListener("beforeinstallprompt", (e) => {
-    if (!installBtn) return;
-    e.preventDefault();
-    deferredPrompt = e;
-    if (installBtn) installBtn.style.display = "inline-flex";
-  });
-
-  window.addEventListener("appinstalled", () => {
-    deferredPrompt = null;
-    if (installBtn) installBtn.style.display = "none";
-    showMessage("Application installée !");
-  });
-
   document.getElementById("addRecipientBtn").addEventListener("click", () => {
     addListItem("recipients", newRecipientInput.value);
     newRecipientInput.value = "";
@@ -896,18 +882,6 @@ function registerServiceWorker() {
   }
   navigator.serviceWorker.register("service-worker.js").catch((err) => {
     console.error("SW registration failed", err);
-  });
-}
-
-function handleInstallClick() {
-  if (!deferredPrompt) {
-    showMessage("Installation non disponible pour le moment.");
-    return;
-  }
-  deferredPrompt.prompt();
-  deferredPrompt.userChoice.finally(() => {
-    deferredPrompt = null;
-    installBtn.style.display = "none";
   });
 }
 
