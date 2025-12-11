@@ -655,9 +655,21 @@ function attachSuggestionDropdown(inputEl, dropdownEl, valuesProvider) {
   if (!inputEl || !dropdownEl || typeof valuesProvider !== "function") return;
 
   let hideTimeout;
+  let isSelecting = false;
+
+  function selectValue(val) {
+    isSelecting = false;
+    inputEl.value = val;
+    dropdownEl.classList.remove("show");
+    inputEl.focus();
+  }
 
   function hide() {
-    hideTimeout = setTimeout(() => dropdownEl.classList.remove("show"), 120);
+    hideTimeout = setTimeout(() => {
+      if (!isSelecting) {
+        dropdownEl.classList.remove("show");
+      }
+    }, 150);
   }
 
   function show(filtered) {
@@ -675,22 +687,21 @@ function attachSuggestionDropdown(inputEl, dropdownEl, valuesProvider) {
         item.className = "suggestion-item";
         item.tabIndex = 0;
         item.textContent = val;
-        item.addEventListener("mousedown", (e) => e.preventDefault());
-        item.addEventListener("click", () => {
-          inputEl.value = val;
-          dropdownEl.classList.remove("show");
+        item.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          isSelecting = true;
         });
+        item.addEventListener("touchstart", () => {
+          isSelecting = true;
+        }, { passive: true });
+        item.addEventListener("click", () => selectValue(val));
         item.addEventListener("touchend", (e) => {
           e.preventDefault();
-          inputEl.value = val;
-          dropdownEl.classList.remove("show");
-          inputEl.focus();
+          selectValue(val);
         });
         item.addEventListener("keydown", (e) => {
           if (e.key === "Enter") {
-            inputEl.value = val;
-            dropdownEl.classList.remove("show");
-            inputEl.focus();
+            selectValue(val);
           }
         });
         dropdownEl.appendChild(item);
@@ -712,7 +723,6 @@ function attachSuggestionDropdown(inputEl, dropdownEl, valuesProvider) {
   inputEl.addEventListener("input", handleInput);
   inputEl.addEventListener("blur", hide);
   dropdownEl.addEventListener("mousedown", (e) => e.preventDefault());
-  dropdownEl.addEventListener("touchstart", (e) => e.preventDefault());
   dropdownEl.addEventListener("mouseleave", hide);
 }
 
