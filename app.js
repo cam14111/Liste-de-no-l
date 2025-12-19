@@ -1,8 +1,210 @@
 const STORAGE_KEY = "xmas-gifts-v1";
 const STORAGE_META_KEY = "xmas-gifts-meta-v1";
+const THEME_STORAGE_KEY = "appThemeId";
+const DEFAULT_THEME_ID = "noel";
+
+// Définition des thèmes
+const THEMES = {
+  noel: {
+    id: "noel",
+    label: "Noël",
+    emoji: "🎄",
+    title: "Atelier Noël",
+    subtitle: "Suivi des cadeaux",
+    palette: {
+      primary: "#0f3d3e",
+      secondary: "#124748",
+      accent: "#73ffc6",
+      bg: "#061a1d",
+      surface: "#0f3d3e",
+      text: "#e9f5f2",
+      mutedText: "#9fb3b5",
+      border: "rgba(255, 255, 255, 0.08)",
+      onPrimary: "#e9f5f2"
+    },
+    pattern: "snowflakes",
+    isDark: true
+  },
+  valentine: {
+    id: "valentine",
+    label: "Saint-Valentin",
+    emoji: "💘",
+    title: "Cadeaux St-Valentin",
+    subtitle: "Pour mon amour",
+    palette: {
+      primary: "#D81B60",
+      secondary: "#F8BBD0",
+      accent: "#8E24AA",
+      bg: "#FFF7FA",
+      surface: "#FFFFFF",
+      text: "#2B2B2B",
+      mutedText: "#6B6B6B",
+      border: "#F3C6D6",
+      onPrimary: "#FFFFFF"
+    },
+    pattern: "hearts",
+    isDark: false
+  },
+  birthday: {
+    id: "birthday",
+    label: "Anniversaire",
+    emoji: "🎂",
+    title: "Cadeaux Anniversaire",
+    subtitle: "Joyeux anniversaire !",
+    palette: {
+      primary: "#7C3AED",
+      secondary: "#FDE68A",
+      accent: "#22C55E",
+      bg: "#FAFAFF",
+      surface: "#FFFFFF",
+      text: "#1F2937",
+      mutedText: "#6B7280",
+      border: "#E5E7EB",
+      onPrimary: "#FFFFFF"
+    },
+    pattern: "confetti",
+    isDark: false
+  },
+  meeting_anniversary: {
+    id: "meeting_anniversary",
+    label: "Anniversaire de rencontre",
+    emoji: "✨",
+    title: "Notre Rencontre",
+    subtitle: "Un moment magique",
+    palette: {
+      primary: "#B45309",
+      secondary: "#FCE7C3",
+      accent: "#0EA5E9",
+      bg: "#FFFBF5",
+      surface: "#FFFFFF",
+      text: "#2A2A2A",
+      mutedText: "#6B6B6B",
+      border: "#F3D9B1",
+      onPrimary: "#FFFFFF"
+    },
+    pattern: "stars",
+    isDark: false
+  },
+  wedding_anniversary: {
+    id: "wedding_anniversary",
+    label: "Anniversaire de mariage",
+    emoji: "💍",
+    title: "Notre Mariage",
+    subtitle: "Célébrons notre amour",
+    palette: {
+      primary: "#0F172A",
+      secondary: "#E2E8F0",
+      accent: "#D4AF37",
+      bg: "#F8FAFC",
+      surface: "#FFFFFF",
+      text: "#0B1220",
+      mutedText: "#475569",
+      border: "#CBD5E1",
+      onPrimary: "#FFFFFF"
+    },
+    pattern: "monogram",
+    isDark: false
+  },
+  neutral: {
+    id: "neutral",
+    label: "Neutre",
+    emoji: "🗓️",
+    title: "Liste Cadeaux",
+    subtitle: "Suivi des achats",
+    palette: {
+      primary: "#2563EB",
+      secondary: "#E5E7EB",
+      accent: "#10B981",
+      bg: "#F7F7F8",
+      surface: "#FFFFFF",
+      text: "#111827",
+      mutedText: "#6B7280",
+      border: "#D1D5DB",
+      onPrimary: "#FFFFFF"
+    },
+    pattern: "none",
+    isDark: false
+  }
+};
+
+// Gestionnaire de thèmes
+const ThemeManager = {
+  themes: THEMES,
+  currentThemeId: null,
+
+  init() {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    const themeId = (saved && this.themes[saved]) ? saved : DEFAULT_THEME_ID;
+    this.apply(themeId);
+  },
+
+  apply(themeId) {
+    const theme = this.themes[themeId];
+    if (!theme) return;
+
+    this.currentThemeId = themeId;
+    const root = document.documentElement;
+
+    // Appliquer les couleurs de la palette
+    Object.entries(theme.palette).forEach(([key, value]) => {
+      root.style.setProperty(`--color-${key}`, value);
+    });
+
+    // Data attributes pour les sélecteurs CSS
+    root.dataset.themeId = themeId;
+    root.dataset.themeDark = theme.isDark;
+    root.dataset.themePattern = theme.pattern || "none";
+
+    // Persister le choix
+    localStorage.setItem(THEME_STORAGE_KEY, themeId);
+
+    // Mettre à jour le meta theme-color
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute("content", theme.palette.primary);
+    }
+
+    // Mettre à jour le logo emoji
+    const logo = document.querySelector(".logo");
+    if (logo) {
+      logo.textContent = theme.emoji;
+    }
+
+    // Mettre à jour le titre et sous-titre du header
+    const brandTitle = document.querySelector(".brand-text strong");
+    const brandSubtitle = document.querySelector(".brand-text small");
+    if (brandTitle && theme.title) {
+      brandTitle.textContent = theme.title;
+    }
+    if (brandSubtitle && theme.subtitle) {
+      brandSubtitle.textContent = theme.subtitle;
+    }
+
+    // Mettre à jour les charts si la fonction existe
+    if (typeof window.updateChartsForTheme === "function") {
+      window.updateChartsForTheme(theme);
+    }
+  },
+
+  getCurrentTheme() {
+    return this.themes[this.currentThemeId];
+  },
+
+  listThemes() {
+    return Object.values(this.themes);
+  },
+
+  getThemeId() {
+    return this.currentThemeId;
+  },
+
+  setThemeId(id) {
+    this.apply(id);
+  }
+};
 const form = document.getElementById("giftForm");
 const giftListEl = document.getElementById("giftList");
-const tabs = document.querySelectorAll(".tab");
+const tabs = document.querySelectorAll(".tabs .tab");
 const panels = document.querySelectorAll(".panel");
 const snackbar = document.getElementById("snackbar");
 const confirmDialog = document.getElementById("confirmDialog");
@@ -10,6 +212,10 @@ const confirmMessage = document.getElementById("confirmMessage");
 const confirmOk = document.getElementById("confirmOk");
 const confirmCancel = document.getElementById("confirmCancel");
 const confirmClose = document.getElementById("confirmClose");
+const themeBtn = document.getElementById("themeBtn");
+const themeDialog = document.getElementById("themeDialog");
+const themeGrid = document.getElementById("themeGrid");
+const themeClose = document.getElementById("themeClose");
 const recipientSelect = document.getElementById("recipient");
 const locationSelect = document.getElementById("location");
 
@@ -79,6 +285,7 @@ const statusFieldLabels = {
 init();
 
 function init() {
+  ThemeManager.init();
   bindEvents();
   loadData();
   renderFilters();
@@ -149,10 +356,40 @@ function bindEvents() {
   }
 
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && confirmResolver) {
-      resolveConfirm(false);
+    if (event.key === "Escape") {
+      if (confirmResolver) {
+        resolveConfirm(false);
+      }
+      if (themeDialog?.classList.contains("show")) {
+        closeThemeDialog();
+      }
     }
   });
+
+  // Theme dialog events
+  if (themeBtn) {
+    themeBtn.addEventListener("click", openThemeDialog);
+  }
+
+  if (themeClose) {
+    themeClose.addEventListener("click", closeThemeDialog);
+  }
+
+  if (themeDialog) {
+    themeDialog.addEventListener("click", (event) => {
+      if (event.target === themeDialog) closeThemeDialog();
+    });
+  }
+
+  if (themeGrid) {
+    themeGrid.addEventListener("click", (event) => {
+      const card = event.target.closest(".theme-card");
+      if (!card) return;
+      ThemeManager.apply(card.dataset.themeId);
+      renderThemeGrid();
+      showMessage(`Thème "${ThemeManager.getCurrentTheme().label}" appliqué`);
+    });
+  }
 
   [newRecipientInput, newLocationInput].forEach((input) => {
     input.addEventListener("keydown", (e) => {
@@ -710,13 +947,15 @@ function computeStats(list) {
   const totalPlanned = list.reduce((sum, gift) => sum + (Number.isFinite(gift.price) ? gift.price : 0), 0);
   const purchased = list.filter((gift) => gift.purchaseStatus === "bought");
   const delivered = list.filter((gift) => gift.deliveryStatus === "delivered");
+  const noDeliveryNeeded = list.filter((gift) => gift.deliveryStatus === "na");
   const wrapped = list.filter((gift) => gift.wrapStatus === "wrapped");
 
   const totalSpent = purchased.reduce((sum, gift) => sum + (Number.isFinite(gift.price) ? gift.price : 0), 0);
 
   const totalCount = list.length;
+  const deliveryDenominator = totalCount - noDeliveryNeeded.length;
   const purchasePct = totalCount ? Math.round((purchased.length / totalCount) * 100) : 0;
-  const deliveryPct = totalCount ? Math.round((delivered.length / totalCount) * 100) : 0;
+  const deliveryPct = deliveryDenominator > 0 ? Math.round((delivered.length / deliveryDenominator) * 100) : 0;
   const wrapPct = totalCount ? Math.round((wrapped.length / totalCount) * 100) : 0;
 
   const costPerRecipient = list.reduce((acc, gift) => {
@@ -732,7 +971,12 @@ function computeStats(list) {
     return acc;
   }, {});
 
-  const overallPct = totalCount ? Math.round((purchasePct + deliveryPct + wrapPct) / 3) : 0;
+  // Si aucune livraison n'est requise (tous "Aucun besoin"), exclure ce critère du calcul global
+  const overallPct = totalCount
+    ? deliveryDenominator > 0
+      ? Math.round((purchasePct + deliveryPct + wrapPct) / 3)
+      : Math.round((purchasePct + wrapPct) / 2)
+    : 0;
 
   return {
     totalPlanned: round(totalPlanned),
@@ -748,6 +992,11 @@ function computeStats(list) {
     recipientLocationCounts,
   };
 }
+
+// Expose getCurrentStats for theme updates
+window.getCurrentStats = function () {
+  return computeStats(state.gifts);
+};
 
 function renderListProgress(stats) {
   const percentEl = document.getElementById("listOverallPercent");
@@ -822,6 +1071,39 @@ function resolveConfirm(result) {
   confirmDialog.classList.remove("show");
   confirmResolver(result);
   confirmResolver = null;
+}
+
+// Theme Dialog Functions
+function renderThemeGrid() {
+  if (!themeGrid) return;
+  themeGrid.innerHTML = "";
+
+  ThemeManager.listThemes().forEach((theme) => {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = `theme-card${theme.id === ThemeManager.currentThemeId ? " active" : ""}`;
+    card.dataset.themeId = theme.id;
+    card.innerHTML = `
+      <span class="theme-card-emoji">${theme.emoji}</span>
+      <span class="theme-card-name">${theme.label}</span>
+      <div class="theme-swatches">
+        <span class="theme-swatch" style="background:${theme.palette.primary}"></span>
+        <span class="theme-swatch" style="background:${theme.palette.accent}"></span>
+        <span class="theme-swatch" style="background:${theme.palette.secondary}"></span>
+      </div>
+    `;
+    themeGrid.appendChild(card);
+  });
+}
+
+function openThemeDialog() {
+  renderThemeGrid();
+  themeDialog?.classList.add("show");
+  themeGrid?.querySelector(".theme-card")?.focus();
+}
+
+function closeThemeDialog() {
+  themeDialog?.classList.remove("show");
 }
 
 function updateGiftStatus(id, type, value) {

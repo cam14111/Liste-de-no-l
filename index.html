@@ -32,6 +32,9 @@
             <span class="tab-icon" aria-hidden="true">📊</span>
           </button>
         </nav>
+        <button id="themeBtn" class="tab" aria-label="Changer le thème" aria-haspopup="dialog">
+          <span class="tab-icon" aria-hidden="true">🎨</span>
+        </button>
       </div>
     </header>
 
@@ -296,6 +299,16 @@
         <button id="confirmCancel" class="ghost-btn" type="button">Annuler</button>
         <button id="confirmOk" class="primary-btn" type="button">Supprimer</button>
       </div>
+    </div>
+  </div>
+
+  <div id="themeDialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="themeTitle">
+    <div class="modal theme-modal">
+      <div class="modal-header">
+        <h3 id="themeTitle">Choisir un thème</h3>
+        <button id="themeClose" class="modal-close" type="button" aria-label="Fermer">×</button>
+      </div>
+      <div id="themeGrid" class="theme-grid"></div>
     </div>
   </div>
 

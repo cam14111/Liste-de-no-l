@@ -1,19 +1,49 @@
 (function () {
-  const colors = {
-    green: "#73ffc6",
-    teal: "#1e8e6d",
-    coral: "#ff7a6a",
-    amber: "#ffb86c",
-    grid: "rgba(255,255,255,0.08)",
-    text: "#d7e7e2",
-    stackedPalette: ["#73ffc6", "#37d6a2", "#1e8e6d", "#4ba7d8", "#ffb86c", "#ff7a6a"],
-    label: "#0b0b0b",
-  };
+  // Get theme colors from CSS variables
+  function getThemeColors() {
+    const style = getComputedStyle(document.documentElement);
+    const isDark = document.documentElement.dataset.themeDark === "true";
+
+    const primary = style.getPropertyValue("--color-primary").trim() || "#0f3d3e";
+    const accent = style.getPropertyValue("--color-accent").trim() || "#73ffc6";
+    const text = style.getPropertyValue("--color-text").trim() || "#e9f5f2";
+    const mutedText = style.getPropertyValue("--color-mutedText").trim() || "#9fb3b5";
+    const secondary = style.getPropertyValue("--color-secondary").trim() || "#124748";
+
+    return {
+      primary,
+      accent,
+      text,
+      mutedText,
+      grid: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
+      label: isDark ? "#0b0b0b" : "#ffffff",
+      stackedPalette: generateStackedPalette(accent, primary, secondary, isDark),
+    };
+  }
+
+  // Generate a palette for stacked charts based on theme colors
+  function generateStackedPalette(accent, primary, secondary, isDark) {
+    if (isDark) {
+      return [accent, adjustBrightness(accent, -30), primary, adjustBrightness(primary, 30), "#ffb86c", "#ff7a6a"];
+    }
+    return [primary, adjustBrightness(primary, 20), accent, adjustBrightness(accent, -20), secondary, adjustBrightness(secondary, -30)];
+  }
+
+  // Adjust color brightness
+  function adjustBrightness(hex, percent) {
+    const num = parseInt(hex.replace("#", ""), 16);
+    const amt = Math.round(2.55 * percent);
+    const R = Math.min(255, Math.max(0, (num >> 16) + amt));
+    const G = Math.min(255, Math.max(0, ((num >> 8) & 0x00ff) + amt));
+    const B = Math.min(255, Math.max(0, (num & 0x0000ff) + amt));
+    return `#${(0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1)}`;
+  }
 
   const valueLabelPlugin = {
     id: "valueLabel",
     afterDatasetsDraw(chart, args, opts) {
       const { ctx } = chart;
+      const colors = getThemeColors();
       ctx.save();
       chart.data.datasets.forEach((dataset, datasetIndex) => {
         const meta = chart.getDatasetMeta(datasetIndex);
@@ -41,6 +71,7 @@
   let giftLocationChart;
 
   function createPurchaseChart(ctx, stats) {
+    const colors = getThemeColors();
     const total = stats.totalCount || 1;
     const pendingCount = Math.max(total - stats.purchasedCount, 0);
     const data = total === 0 ? [1] : [stats.purchasedCount, pendingCount];
@@ -52,7 +83,7 @@
         datasets: [
           {
             data,
-            backgroundColor: [colors.green, colors.grid],
+            backgroundColor: [colors.accent, colors.grid],
             borderWidth: 0,
           },
         ],
@@ -92,6 +123,7 @@
   }
 
   function createCostChart(ctx, stats, sortBy) {
+    const colors = getThemeColors();
     const costData = getCostData(stats, sortBy);
 
     return new Chart(ctx, {
@@ -102,7 +134,7 @@
           {
             label: "Coût (€)",
             data: costData.data,
-            backgroundColor: costData.labels.map(() => colors.teal),
+            backgroundColor: costData.labels.map(() => colors.primary),
             borderRadius: 8,
           },
         ],
@@ -126,6 +158,7 @@
   }
 
   function buildGiftLocationData(stats, sortBy) {
+    const colors = getThemeColors();
     const counts = stats.recipientLocationCounts || {};
     const baseLabels = Object.keys(counts);
 
@@ -180,6 +213,7 @@
   }
 
   function createGiftLocationChart(ctx, stats, sortBy) {
+    const colors = getThemeColors();
     const { labels, datasets } = buildGiftLocationData(stats, sortBy);
 
     return new Chart(ctx, {
@@ -214,6 +248,7 @@
   }
 
   window.renderCharts = function renderCharts(stats) {
+    const colors = getThemeColors();
     const purchaseCtx = document.getElementById("purchaseChart");
     const costCtx = document.getElementById("costChart");
     const locationCtx = document.getElementById("giftLocationChart");
@@ -230,6 +265,8 @@
       const total = stats.totalCount || 1;
       const pending = Math.max(total - stats.purchasedCount, 0);
       purchaseChart.data.datasets[0].data = total === 0 ? [1] : [stats.purchasedCount, pending];
+      purchaseChart.data.datasets[0].backgroundColor = [colors.accent, colors.grid];
+      purchaseChart.options.plugins.legend.labels.color = colors.text;
       purchaseChart.update();
     }
 
@@ -239,7 +276,10 @@
     } else {
       costChart.data.labels = costData.labels;
       costChart.data.datasets[0].data = costData.data;
-      costChart.data.datasets[0].backgroundColor = costData.labels.map(() => colors.teal);
+      costChart.data.datasets[0].backgroundColor = costData.labels.map(() => colors.primary);
+      costChart.options.scales.x.ticks.color = colors.text;
+      costChart.options.scales.y.ticks.color = colors.text;
+      costChart.options.scales.y.grid.color = colors.grid;
       costChart.update();
     }
 
@@ -249,7 +289,37 @@
     } else {
       giftLocationChart.data.labels = labels;
       giftLocationChart.data.datasets = datasets;
+      giftLocationChart.options.scales.x.ticks.color = colors.text;
+      giftLocationChart.options.scales.y.ticks.color = colors.text;
+      giftLocationChart.options.scales.y.grid.color = colors.grid;
+      giftLocationChart.options.plugins.legend.labels.color = colors.text;
       giftLocationChart.update();
+    }
+  };
+
+  // Function to update charts when theme changes
+  window.updateChartsForTheme = function updateChartsForTheme(theme) {
+    // Destroy existing charts
+    if (purchaseChart) {
+      purchaseChart.destroy();
+      purchaseChart = null;
+    }
+    if (costChart) {
+      costChart.destroy();
+      costChart = null;
+    }
+    if (giftLocationChart) {
+      giftLocationChart.destroy();
+      giftLocationChart = null;
+    }
+
+    // Re-render charts will happen automatically when renderDashboard is called
+    // Trigger a re-render if getCurrentStats is available
+    if (typeof window.getCurrentStats === "function") {
+      const stats = window.getCurrentStats();
+      if (stats) {
+        window.renderCharts(stats);
+      }
     }
   };
 })();
