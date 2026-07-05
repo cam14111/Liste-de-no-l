@@ -255,7 +255,23 @@
     const costSort = document.getElementById("costSort")?.value || "name";
     const locationSort = document.getElementById("locationSort")?.value || "name";
 
-    if (!purchaseCtx || !costCtx || !locationCtx || typeof Chart === "undefined") {
+    if (!purchaseCtx || !costCtx || !locationCtx) {
+      return;
+    }
+
+    // Chart.js chargé depuis un CDN : dégradation propre s'il est indisponible
+    // (première ouverture hors-ligne, blocage réseau...).
+    if (typeof Chart === "undefined") {
+      [purchaseCtx, costCtx, locationCtx].forEach((canvas) => {
+        const card = canvas.closest(".chart-card");
+        if (card && !card.querySelector(".chart-fallback")) {
+          canvas.style.display = "none";
+          const note = document.createElement("p");
+          note.className = "chart-fallback muted";
+          note.textContent = "Graphique indisponible hors-ligne.";
+          card.appendChild(note);
+        }
+      });
       return;
     }
 

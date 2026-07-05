@@ -2,6 +2,111 @@ const STORAGE_KEY = "xmas-gifts-v1";
 const STORAGE_META_KEY = "xmas-gifts-meta-v1";
 const THEME_STORAGE_KEY = "appThemeId";
 const DEFAULT_THEME_ID = "noel";
+const SCHEMA_VERSION = 1;
+
+// Valeurs de statut autorisées (source de vérité pour la validation)
+const PURCHASE_VALUES = ["to_buy", "bought"];
+const DELIVERY_VALUES = ["none", "transit", "delivered", "na"];
+const WRAP_VALUES = ["not_wrapped", "wrapped"];
+
+/**
+ * Accès localStorage tolérant aux erreurs (mode privé, quota plein, stockage
+ * désactivé). Ne jette jamais : l'application reste utilisable même sans
+ * persistance.
+ */
+const storage = {
+  available: (() => {
+    try {
+      const k = "__xmas_test__";
+      localStorage.setItem(k, "1");
+      localStorage.removeItem(k);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  })(),
+  get(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (e) {
+      console.error("Échec d'écriture localStorage", e);
+      if (e && (e.name === "QuotaExceededError" || e.code === 22)) {
+        showMessage("Stockage plein : impossible d'enregistrer.");
+      }
+      return false;
+    }
+  },
+  remove(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      /* ignore */
+    }
+  },
+};
+
+/** Échappe le HTML pour empêcher toute injection (XSS) dans innerHTML. */
+function escapeHtml(value) {
+  if (value == null) return "";
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** N'autorise que les URLs http(s) absolues ; bloque javascript:, data:, relatif, etc. */
+function sanitizeUrl(url) {
+  if (!url || typeof url !== "string") return "";
+  const trimmed = url.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = new URL(trimmed); // absolue requise : lève une erreur sinon
+    if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+      return parsed.href;
+    }
+  } catch (e) {
+    /* URL invalide ou relative */
+  }
+  return "";
+}
+
+/** Valide et normalise un cadeau issu du stockage/import. Renvoie null si invalide. */
+function normalizeGift(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const recipient = typeof raw.recipient === "string" ? raw.recipient.trim() : "";
+  const location = typeof raw.location === "string" ? raw.location.trim() : "";
+  const giftName = typeof raw.giftName === "string" ? raw.giftName.trim() : "";
+  if (!recipient || !location || !giftName) return null;
+
+  let price = Number.isFinite(raw.price) ? raw.price : parseFloat(raw.price);
+  if (!Number.isFinite(price) || price < 0) price = 0;
+
+  const now = new Date().toISOString();
+  return {
+    id: typeof raw.id === "string" && raw.id ? raw.id : createId(),
+    recipient,
+    location,
+    giftName,
+    price: round(price),
+    purchaseStatus: PURCHASE_VALUES.includes(raw.purchaseStatus) ? raw.purchaseStatus : "to_buy",
+    deliveryStatus: DELIVERY_VALUES.includes(raw.deliveryStatus) ? raw.deliveryStatus : "none",
+    wrapStatus: WRAP_VALUES.includes(raw.wrapStatus) ? raw.wrapStatus : "not_wrapped",
+    link: typeof raw.link === "string" ? raw.link.trim() : "",
+    notes: typeof raw.notes === "string" ? raw.notes.trim() : "",
+    createdAt: typeof raw.createdAt === "string" ? raw.createdAt : now,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : now,
+  };
+}
 
 // Définition des thèmes
 const THEMES = {
@@ -133,7 +238,7 @@ const ThemeManager = {
   currentThemeId: null,
 
   init() {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    const saved = storage.get(THEME_STORAGE_KEY);
     const themeId = (saved && this.themes[saved]) ? saved : DEFAULT_THEME_ID;
     this.apply(themeId);
   },
@@ -156,7 +261,7 @@ const ThemeManager = {
     root.dataset.themePattern = theme.pattern || "none";
 
     // Persister le choix
-    localStorage.setItem(THEME_STORAGE_KEY, themeId);
+    storage.set(THEME_STORAGE_KEY, themeId);
 
     // Mettre à jour le meta theme-color
     const metaTheme = document.querySelector('meta[name="theme-color"]');
@@ -219,12 +324,17 @@ const themeClose = document.getElementById("themeClose");
 const recipientSelect = document.getElementById("recipient");
 const locationSelect = document.getElementById("location");
 
+const searchInput = document.getElementById("searchInput");
 const filterRecipient = document.getElementById("filterRecipient");
 const filterLocation = document.getElementById("filterLocation");
 const filterPurchase = document.getElementById("filterPurchase");
 const filterDelivery = document.getElementById("filterDelivery");
 const filterWrap = document.getElementById("filterWrap");
 const sortGifts = document.getElementById("sortGifts");
+const exportBtn = document.getElementById("exportBtn");
+const importBtn = document.getElementById("importBtn");
+const importFileInput = document.getElementById("importFileInput");
+const shareBtn = document.getElementById("shareBtn");
 const costSortSelect = document.getElementById("costSort");
 const locationSortSelect = document.getElementById("locationSort");
 
@@ -241,6 +351,8 @@ let state = {
 };
 
 let confirmResolver = null;
+let lastFocusedElement = null;
+let snackbarTimer = null;
 
 const statusLabels = {
   purchase: {
@@ -303,6 +415,7 @@ function bindEvents() {
   document.getElementById("goToFormBtn").addEventListener("click", () => switchPanel("formPanel"));
 
   document.getElementById("clearFiltersBtn").addEventListener("click", () => {
+    if (searchInput) searchInput.value = "";
     filterRecipient.value = "";
     filterLocation.value = "";
     filterPurchase.value = "";
@@ -314,6 +427,23 @@ function bindEvents() {
 
   [filterRecipient, filterLocation, filterPurchase, filterDelivery, filterWrap].forEach((select) => {
     select.addEventListener("change", renderGiftList);
+  });
+
+  searchInput?.addEventListener("input", renderGiftList);
+  searchInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && searchInput.value) {
+      searchInput.value = "";
+      renderGiftList();
+    }
+  });
+
+  exportBtn?.addEventListener("click", exportData);
+  shareBtn?.addEventListener("click", shareSummary);
+  importBtn?.addEventListener("click", () => importFileInput?.click());
+  importFileInput?.addEventListener("change", (event) => {
+    const file = event.target.files && event.target.files[0];
+    handleImportFile(file);
+    event.target.value = ""; // permet de réimporter le même fichier
   });
 
   sortGifts?.addEventListener("change", renderGiftList);
@@ -366,6 +496,8 @@ function bindEvents() {
     }
   });
 
+  window.addEventListener("keydown", handleModalFocusTrap);
+
   // Theme dialog events
   if (themeBtn) {
     themeBtn.addEventListener("click", openThemeDialog);
@@ -407,19 +539,48 @@ function bindEvents() {
 }
 
 function loadData() {
-  const savedGifts = localStorage.getItem(STORAGE_KEY);
+  const savedGifts = storage.get(STORAGE_KEY);
   if (savedGifts) {
-    state.gifts = JSON.parse(savedGifts);
+    try {
+      const parsed = JSON.parse(savedGifts);
+      if (Array.isArray(parsed)) {
+        const normalized = parsed.map(normalizeGift).filter(Boolean);
+        // Si la validation écarte des enregistrements, on conserve l'original
+        // par sécurité avant de réécrire la version nettoyée (pas de perte silencieuse).
+        if (normalized.length !== parsed.length) {
+          storage.set(`${STORAGE_KEY}-backup-${Date.now()}`, savedGifts);
+        }
+        state.gifts = normalized;
+      } else {
+        state.gifts = [];
+      }
+      persist(); // réécrit une version normalisée/nettoyée
+    } catch (e) {
+      console.error("Données cadeaux illisibles", e);
+      // On conserve une copie de secours au lieu d'écraser silencieusement.
+      storage.set(`${STORAGE_KEY}-corrupted-${Date.now()}`, savedGifts);
+      state.gifts = [];
+      showMessage("Données illisibles : une sauvegarde de secours a été créée.");
+    }
   } else {
     state.gifts = getSeedData();
     persist();
   }
 
-  const savedMeta = localStorage.getItem(STORAGE_META_KEY);
+  const savedMeta = storage.get(STORAGE_META_KEY);
   if (savedMeta) {
-    const parsed = JSON.parse(savedMeta);
-    state.recipients = Array.isArray(parsed.recipients) ? parsed.recipients : [];
-    state.locations = Array.isArray(parsed.locations) ? parsed.locations : [];
+    try {
+      const parsed = JSON.parse(savedMeta);
+      state.recipients = Array.isArray(parsed.recipients)
+        ? parsed.recipients.filter((v) => typeof v === "string" && v.trim())
+        : [];
+      state.locations = Array.isArray(parsed.locations)
+        ? parsed.locations.filter((v) => typeof v === "string" && v.trim())
+        : [];
+    } catch (e) {
+      console.error("Métadonnées illisibles", e);
+      deriveListsFromGifts();
+    }
   } else {
     deriveListsFromGifts();
     persistMeta();
@@ -430,13 +591,14 @@ function loadData() {
 }
 
 function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.gifts));
+  storage.set(STORAGE_KEY, JSON.stringify(state.gifts));
 }
 
 function persistMeta() {
-  localStorage.setItem(
+  storage.set(
     STORAGE_META_KEY,
     JSON.stringify({
+      schemaVersion: SCHEMA_VERSION,
       recipients: state.recipients,
       locations: state.locations,
     })
@@ -520,11 +682,12 @@ function getSeedData() {
 function handleSubmit(event) {
   event.preventDefault();
 
+  const parsedPrice = parseFloat(form.price.value);
   const payload = {
     recipient: form.recipient.value.trim(),
     location: form.location.value.trim(),
     giftName: form.giftName.value.trim(),
-    price: parseFloat(form.price.value) || 0,
+    price: Number.isFinite(parsedPrice) && parsedPrice > 0 ? round(parsedPrice) : 0,
     purchaseStatus: form.purchaseStatus.value,
     deliveryStatus: form.deliveryStatus.value,
     wrapStatus: form.wrapStatus.value,
@@ -599,14 +762,19 @@ function populateSelect(select, items) {
 
 
 function applyFilters(list) {
+  const query = (searchInput?.value || "").trim().toLowerCase();
   return list.filter((gift) => {
     const matchRecipient = filterRecipient.value ? gift.recipient === filterRecipient.value : true;
     const matchLocation = filterLocation.value ? gift.location === filterLocation.value : true;
     const matchPurchase = filterPurchase.value ? gift.purchaseStatus === filterPurchase.value : true;
     const matchDelivery = filterDelivery.value ? gift.deliveryStatus === filterDelivery.value : true;
     const matchWrap = filterWrap.value ? gift.wrapStatus === filterWrap.value : true;
+    const matchQuery = query
+      ? [gift.giftName, gift.recipient, gift.location, gift.notes]
+          .some((field) => (field || "").toLowerCase().includes(query))
+      : true;
 
-    return matchRecipient && matchLocation && matchPurchase && matchDelivery && matchWrap;
+    return matchRecipient && matchLocation && matchPurchase && matchDelivery && matchWrap && matchQuery;
   });
 }
 
@@ -780,15 +948,30 @@ function renderGiftList() {
 
   if (list.length === 0) {
     giftListEl.classList.remove("grouped");
+    const hasGifts = state.gifts.length > 0;
     const empty = document.createElement("div");
-    empty.className = "card";
-    empty.innerHTML = `
-      <p class="label">Aucun cadeau trouvé.</p>
-      <p style="margin:6px 0 10px; color: var(--muted);">Ajoute ton premier cadeau ou ajuste les filtres.</p>
-      <button class="primary-btn" id="emptyCreate">+ Ajouter un cadeau</button>
-    `;
-    giftListEl.appendChild(empty);
-    document.getElementById("emptyCreate").addEventListener("click", () => switchPanel("formPanel"));
+    empty.className = "card empty-state";
+    if (hasGifts) {
+      empty.innerHTML = `
+        <p class="empty-emoji" aria-hidden="true">🔍</p>
+        <p class="label">Aucun cadeau ne correspond.</p>
+        <p class="muted">Aucun résultat pour ces filtres ou cette recherche.</p>
+        <button class="ghost-btn" id="emptyClear">Réinitialiser les filtres</button>
+      `;
+      giftListEl.appendChild(empty);
+      document.getElementById("emptyClear").addEventListener("click", () => {
+        document.getElementById("clearFiltersBtn").click();
+      });
+    } else {
+      empty.innerHTML = `
+        <p class="empty-emoji" aria-hidden="true">🎁</p>
+        <p class="label">Votre liste est vide.</p>
+        <p class="muted">Ajoutez votre premier cadeau ou importez une sauvegarde.</p>
+        <button class="primary-btn" id="emptyCreate">+ Ajouter un cadeau</button>
+      `;
+      giftListEl.appendChild(empty);
+      document.getElementById("emptyCreate").addEventListener("click", () => switchPanel("formPanel"));
+    }
     return;
   }
 
@@ -799,7 +982,7 @@ function renderGiftList() {
       wrapper.className = "gift-group";
       wrapper.innerHTML = `
         <div class="gift-group-header">
-          <h3>${group.label || "—"}</h3>
+          <h3>${escapeHtml(group.label) || "—"}</h3>
           <span class="chip subtle">${group.items.length} cadeau${group.items.length > 1 ? "x" : ""}</span>
         </div>
       `;
@@ -848,35 +1031,40 @@ function buildGiftCardElement(gift) {
     buildBadge("wrap", gift.wrapStatus, gift.id),
   ].join("");
 
-  const linkBlock = gift.link
-    ? `<a href="${gift.link}" target="_blank" rel="noopener" style="color: var(--accent); font-weight:600;">Voir le lien</a>`
+  const safeLink = sanitizeUrl(gift.link);
+  const linkBlock = safeLink
+    ? `<a class="gift-link" href="${escapeHtml(safeLink)}" target="_blank" rel="noopener noreferrer">🔗 Voir le lien</a>`
     : "";
 
-  const notesBlock = gift.notes ? `<p style="color: var(--muted); font-size:0.95rem;">${gift.notes}</p>` : "";
+  const notesBlock = gift.notes
+    ? `<p class="gift-notes">${escapeHtml(gift.notes)}</p>`
+    : "";
+
+  const safeId = escapeHtml(gift.id);
 
   card.innerHTML = `
     <div class="header">
       <div>
-        <div class="title">${gift.giftName}</div>
+        <div class="title">${escapeHtml(gift.giftName)}</div>
         <div class="meta">
-          <span>${gift.recipient}</span>
+          <span>${escapeHtml(gift.recipient)}</span>
           <span>•</span>
-          <span>${gift.location}</span>
+          <span>${escapeHtml(gift.location)}</span>
           <span>•</span>
-          <strong>${price}</strong>
+          <strong>${escapeHtml(price)}</strong>
         </div>
       </div>
       <div class="gift-actions">
-        <button class="ghost-btn icon-btn" data-action="edit" data-id="${gift.id}" aria-label="Modifier ce cadeau">
-          <span class="btn-icon">&#9998;</span>
+        <button class="ghost-btn icon-btn" data-action="edit" data-id="${safeId}" aria-label="Modifier « ${escapeHtml(gift.giftName)} »">
+          <span class="btn-icon" aria-hidden="true">&#9998;</span>
         </button>
-        <button class="ghost-btn icon-btn" data-action="delete" data-id="${gift.id}" aria-label="Supprimer ce cadeau">
-          <span class="btn-icon">&#128465;</span>
+        <button class="ghost-btn icon-btn" data-action="delete" data-id="${safeId}" aria-label="Supprimer « ${escapeHtml(gift.giftName)} »">
+          <span class="btn-icon" aria-hidden="true">&#128465;</span>
         </button>
       </div>
     </div>
     <div class="badges">${badges}</div>
-    <div class="gift-progress" aria-label="Avancement individuel">
+    <div class="gift-progress" aria-label="Avancement : ${progress}%">
       <div class="gift-progress-bar">
         <div class="gift-progress-fill${isComplete ? " complete" : ""}" style="width:${progress}%;"></div>
       </div>
@@ -914,13 +1102,28 @@ function populateForm(id) {
 }
 
 function deleteGift(id) {
-  state.gifts = state.gifts.filter((gift) => gift.id !== id);
+  const index = state.gifts.findIndex((gift) => gift.id === id);
+  if (index === -1) return;
+  const [removed] = state.gifts.splice(index, 1);
   persist();
   renderFilters();
   renderManagedLists();
   renderGiftList();
   renderDashboard();
-  showMessage("Cadeau supprimé.");
+  showMessage("Cadeau supprimé.", {
+    label: "Annuler",
+    onClick: () => {
+      const at = Math.min(index, state.gifts.length);
+      state.gifts.splice(at, 0, removed);
+      syncListsWithGift(removed);
+      persist();
+      renderFilters();
+      renderManagedLists();
+      renderGiftList();
+      renderDashboard();
+      showMessage("Suppression annulée.");
+    },
+  });
 }
 
 function renderDashboard() {
@@ -1057,6 +1260,7 @@ function openConfirmDialog(message) {
     return Promise.resolve(false);
   }
 
+  lastFocusedElement = document.activeElement;
   confirmMessage.textContent = message;
   confirmDialog.classList.add("show");
   confirmOk?.focus();
@@ -1069,8 +1273,45 @@ function openConfirmDialog(message) {
 function resolveConfirm(result) {
   if (!confirmDialog || !confirmResolver) return;
   confirmDialog.classList.remove("show");
-  confirmResolver(result);
+  const resolve = confirmResolver;
   confirmResolver = null;
+  restoreFocus();
+  resolve(result);
+}
+
+/** Renvoie la modale actuellement ouverte, le cas échéant. */
+function getOpenModal() {
+  if (confirmDialog?.classList.contains("show")) return confirmDialog;
+  if (themeDialog?.classList.contains("show")) return themeDialog;
+  return null;
+}
+
+/** Rend le focus à l'élément qui a ouvert la modale (s'il existe encore). */
+function restoreFocus() {
+  if (lastFocusedElement && document.contains(lastFocusedElement) && typeof lastFocusedElement.focus === "function") {
+    lastFocusedElement.focus();
+  }
+  lastFocusedElement = null;
+}
+
+/** Piège le focus (Tab / Shift+Tab) à l'intérieur de la modale ouverte. */
+function handleModalFocusTrap(event) {
+  if (event.key !== "Tab") return;
+  const modal = getOpenModal();
+  if (!modal) return;
+  const focusables = Array.from(
+    modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+  ).filter((el) => !el.disabled && el.offsetParent !== null);
+  if (!focusables.length) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
 }
 
 // Theme Dialog Functions
@@ -1097,13 +1338,16 @@ function renderThemeGrid() {
 }
 
 function openThemeDialog() {
+  lastFocusedElement = document.activeElement;
   renderThemeGrid();
   themeDialog?.classList.add("show");
-  themeGrid?.querySelector(".theme-card")?.focus();
+  (themeGrid?.querySelector(".theme-card.active") || themeGrid?.querySelector(".theme-card"))?.focus();
 }
 
 function closeThemeDialog() {
-  themeDialog?.classList.remove("show");
+  if (!themeDialog?.classList.contains("show")) return;
+  themeDialog.classList.remove("show");
+  restoreFocus();
 }
 
 function updateGiftStatus(id, type, value) {
@@ -1154,18 +1398,49 @@ function createId() {
 
 function switchPanel(targetId) {
   panels.forEach((panel) => panel.classList.remove("active"));
-  tabs.forEach((tab) => tab.classList.remove("active"));
+  tabs.forEach((tab) => {
+    tab.classList.remove("active");
+    tab.setAttribute("aria-selected", "false");
+  });
 
   document.getElementById(targetId)?.classList.add("active");
   const tab = Array.from(tabs).find((t) => t.dataset.target === targetId);
-  tab?.classList.add("active");
+  if (tab) {
+    tab.classList.add("active");
+    tab.setAttribute("aria-selected", "true");
+  }
 }
 
-function showMessage(text) {
+function showMessage(text, action) {
   if (!snackbar) return;
-  snackbar.textContent = text;
+  clearTimeout(snackbarTimer);
+  snackbar.innerHTML = "";
+
+  const msg = document.createElement("span");
+  msg.className = "snackbar-text";
+  msg.textContent = text;
+  snackbar.appendChild(msg);
+
+  const hasAction = action && action.label && typeof action.onClick === "function";
+  if (hasAction) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "snackbar-action";
+    btn.textContent = action.label;
+    btn.addEventListener("click", () => {
+      hideSnackbar();
+      action.onClick();
+    });
+    snackbar.appendChild(btn);
+  }
+
   snackbar.classList.add("show");
-  setTimeout(() => snackbar.classList.remove("show"), 2200);
+  snackbarTimer = setTimeout(hideSnackbar, hasAction ? 6000 : 2400);
+}
+
+function hideSnackbar() {
+  clearTimeout(snackbarTimer);
+  snackbar?.classList.remove("show");
 }
 
 function registerServiceWorker() {
@@ -1195,26 +1470,62 @@ function syncListsWithGift(gift) {
   }
 }
 
-function importGiftData(rawText) {
-  if (!rawText || typeof rawText !== "string") return { imported: 0, skipped: 0 };
-  const rows = rawText.trim().split(/\r?\n/);
-  if (rows.length <= 1) return { imported: 0, skipped: 0 };
+/** Clé de déduplication : même destinataire + lieu + cadeau (insensible à la casse). */
+function giftKey(gift) {
+  return `${gift.recipient}|${gift.location}|${gift.giftName}`.toLowerCase();
+}
 
-  const payloadRows = rows.slice(1); // skip header
+/**
+ * Importe un tableau de cadeaux bruts (validés/normalisés). Déduplique par
+ * défaut et n'écrase jamais les données existantes (fusion additive sûre).
+ */
+function importGiftsArray(rawGifts, { dedupe = true } = {}) {
+  if (!Array.isArray(rawGifts)) return { imported: 0, skipped: 0 };
+  const existing = new Set(state.gifts.map(giftKey));
   let imported = 0;
   let skipped = 0;
-  const now = new Date().toISOString();
 
-  payloadRows.forEach((row) => {
-    const cells = splitRow(row);
-    if (cells.length < 7) {
+  rawGifts.forEach((raw) => {
+    const gift = normalizeGift(raw);
+    if (!gift) {
       skipped += 1;
       return;
     }
+    if (dedupe && existing.has(giftKey(gift))) {
+      skipped += 1;
+      return;
+    }
+    existing.add(giftKey(gift));
+    gift.id = createId(); // évite toute collision d'id
+    state.gifts.unshift(gift);
+    syncListsWithGift(gift);
+    imported += 1;
+  });
 
+  if (imported) {
+    persist();
+    renderFilters();
+    renderManagedLists();
+    renderGiftList();
+    renderDashboard();
+  }
+  return { imported, skipped };
+}
+
+/** Import CSV/TSV (colonnes recipient,location,giftName,price,purchase,delivery,wrap). */
+function importGiftData(rawText) {
+  if (!rawText || typeof rawText !== "string") return { imported: 0, skipped: 0 };
+  const rows = rawText.trim().split(/\r?\n/);
+  if (rows.length <= 1) {
+    showMessage("Fichier vide ou sans données.");
+    return { imported: 0, skipped: 0 };
+  }
+
+  const rawGifts = rows.slice(1).map((row) => {
+    const cells = splitRow(row);
+    if (cells.length < 7) return null;
     const [recipient, location, giftName, priceRaw, purchaseRaw, deliveryRaw, wrapRaw] = cells;
-    const gift = {
-      id: createId(),
+    return {
       recipient: recipient.trim(),
       location: location.trim(),
       giftName: giftName.trim(),
@@ -1222,30 +1533,163 @@ function importGiftData(rawText) {
       purchaseStatus: normalizePurchase(purchaseRaw),
       deliveryStatus: normalizeDelivery(deliveryRaw),
       wrapStatus: normalizeWrap(wrapRaw),
-      link: "",
-      notes: "",
-      createdAt: now,
-      updatedAt: now,
     };
+  }).filter(Boolean);
 
-    if (!gift.recipient || !gift.location || !gift.giftName) {
-      skipped += 1;
+  const result = importGiftsArray(rawGifts);
+  announceImport(result);
+  return result;
+}
+
+/** Import d'une sauvegarde JSON (format app ou tableau brut de cadeaux). */
+function importJsonData(rawText) {
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (e) {
+    showMessage("Fichier JSON invalide.");
+    return { imported: 0, skipped: 0 };
+  }
+
+  const rawGifts = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === "object" && Array.isArray(parsed.gifts)
+    ? parsed.gifts
+    : null;
+
+  if (!rawGifts) {
+    showMessage("Aucun cadeau trouvé dans le fichier.");
+    return { imported: 0, skipped: 0 };
+  }
+
+  // Fusionner aussi les listes maîtres si présentes.
+  if (parsed && !Array.isArray(parsed)) {
+    mergeMasterLists(parsed.recipients, "recipients");
+    mergeMasterLists(parsed.locations, "locations");
+  }
+
+  const result = importGiftsArray(rawGifts);
+  announceImport(result);
+  return result;
+}
+
+function mergeMasterLists(items, type) {
+  if (!Array.isArray(items)) return;
+  const list = state[type];
+  items.forEach((value) => {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed && !list.some((v) => v.toLowerCase() === trimmed.toLowerCase())) {
+      list.push(trimmed);
+    }
+  });
+  persistMeta();
+}
+
+function announceImport({ imported, skipped }) {
+  if (!imported && !skipped) return;
+  if (!imported) {
+    showMessage(`Aucun nouveau cadeau (${skipped} ignoré·s).`);
+  } else {
+    showMessage(`${imported} cadeau·x importé·s${skipped ? `, ${skipped} ignoré·s` : ""}.`);
+  }
+}
+
+/** Lit un fichier importé et route vers l'import JSON ou CSV. */
+function handleImportFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const text = String(reader.result || "");
+    const name = (file.name || "").toLowerCase();
+    const looksJson = name.endsWith(".json") || /^\s*[[{]/.test(text);
+    if (looksJson) {
+      importJsonData(text);
+    } else {
+      importGiftData(text);
+    }
+  };
+  reader.onerror = () => showMessage("Lecture du fichier impossible.");
+  reader.readAsText(file);
+}
+
+/** Exporte une sauvegarde JSON complète (téléchargement local). */
+function exportData() {
+  const payload = {
+    app: "atelier-noel",
+    schemaVersion: SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    gifts: state.gifts,
+    recipients: state.recipients,
+    locations: state.locations,
+  };
+  try {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `cadeaux-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showMessage("Sauvegarde exportée.");
+  } catch (e) {
+    console.error("Export impossible", e);
+    showMessage("Export impossible sur cet appareil.");
+  }
+}
+
+/** Construit un résumé lisible de la liste pour le partage. */
+function buildShareSummary() {
+  const stats = computeStats(state.gifts);
+  const theme = ThemeManager.getCurrentTheme();
+  const lines = [];
+  lines.push(`${theme?.emoji || "🎁"} ${theme?.title || "Liste de cadeaux"}`);
+  lines.push(`${stats.totalCount} cadeau·x • ${stats.purchasePct}% achetés • ${formatCurrency(stats.totalSpent)} dépensés`);
+  lines.push("");
+
+  const byRecipient = {};
+  state.gifts.forEach((gift) => {
+    (byRecipient[gift.recipient] = byRecipient[gift.recipient] || []).push(gift);
+  });
+  Object.keys(byRecipient)
+    .sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }))
+    .forEach((recipient) => {
+      lines.push(`${recipient} :`);
+      byRecipient[recipient].forEach((gift) => {
+        const check = gift.purchaseStatus === "bought" ? "✅" : "⬜";
+        lines.push(`  ${check} ${gift.giftName}`);
+      });
+    });
+  return lines.join("\n");
+}
+
+/** Partage le résumé via l'API Web Share, sinon copie dans le presse-papier. */
+async function shareSummary() {
+  if (!state.gifts.length) {
+    showMessage("Aucun cadeau à partager.");
+    return;
+  }
+  const text = buildShareSummary();
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: "Ma liste de cadeaux", text });
       return;
     }
-
-    state.gifts.unshift(gift);
-    syncListsWithGift(gift);
-    imported += 1;
-  });
-
-  persist();
-  renderFilters();
-  renderManagedLists();
-  renderGiftList();
-  renderDashboard();
-  showMessage(`${imported} cadeau(x) importé(s).`);
-
-  return { imported, skipped };
+  } catch (e) {
+    if (e && e.name === "AbortError") return; // annulé par l'utilisateur
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      showMessage("Résumé copié dans le presse-papier.");
+      return;
+    }
+  } catch (e) {
+    /* fallback ci-dessous */
+  }
+  showMessage("Partage non disponible sur cet appareil.");
 }
 
 function splitRow(row) {
@@ -1288,3 +1732,5 @@ function normalizeWrap(value) {
 }
 
 window.importGiftData = importGiftData;
+window.importJsonData = importJsonData;
+window.exportData = exportData;
