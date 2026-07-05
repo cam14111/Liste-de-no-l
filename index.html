@@ -25,10 +25,10 @@
       </div>
       <div class="header-actions">
         <nav class="tabs" role="tablist">
-          <button class="tab active" data-target="listPanel" role="tab" aria-controls="listPanel" aria-label="Liste">
+          <button class="tab active" data-target="listPanel" role="tab" aria-controls="listPanel" aria-selected="true" aria-label="Liste">
             <span class="tab-icon" aria-hidden="true">📋</span>
           </button>
-          <button class="tab" data-target="dashboardPanel" role="tab" aria-controls="dashboardPanel" aria-label="Tableau de bord">
+          <button class="tab" data-target="dashboardPanel" role="tab" aria-controls="dashboardPanel" aria-selected="false" aria-label="Tableau de bord">
             <span class="tab-icon" aria-hidden="true">📊</span>
           </button>
         </nav>
@@ -44,7 +44,24 @@
           <div>
             <h2>Liste des cadeaux</h2>
           </div>
-          <button id="goToFormBtn" class="primary-btn">+ Ajouter</button>
+          <div class="panel-actions">
+            <button id="shareBtn" class="ghost-btn icon-btn" type="button" aria-label="Partager la liste" title="Partager">
+              <span class="btn-icon" aria-hidden="true">📤</span>
+            </button>
+            <button id="exportBtn" class="ghost-btn icon-btn" type="button" aria-label="Exporter une sauvegarde" title="Exporter (sauvegarde)">
+              <span class="btn-icon" aria-hidden="true">💾</span>
+            </button>
+            <button id="importBtn" class="ghost-btn icon-btn" type="button" aria-label="Importer une sauvegarde ou un CSV" title="Importer">
+              <span class="btn-icon" aria-hidden="true">📥</span>
+            </button>
+            <button id="goToFormBtn" class="primary-btn">+ Ajouter</button>
+          </div>
+          <input id="importFileInput" type="file" accept=".json,.csv,.tsv,.txt,application/json,text/csv" hidden>
+        </div>
+
+        <div class="search-row">
+          <span class="search-icon" aria-hidden="true">🔍</span>
+          <input id="searchInput" type="search" placeholder="Rechercher un cadeau, un nom, un lieu…" aria-label="Rechercher dans la liste" autocomplete="off">
         </div>
 
         <div class="filters">
