@@ -1,4 +1,4 @@
-const CACHE_NAME = "xmas-gifts-cache-v3";
+const CACHE_NAME = "xmas-gifts-cache-v5";
 const APP_ASSETS = [
   "./",
   "./index.html",
@@ -6,7 +6,9 @@ const APP_ASSETS = [
   "./app.js",
   "./charts.js",
   "./manifest.json",
-  "https://cdn.jsdelivr.net/npm/chart.js"
+  "./vendor/chart.umd.min.js",
+  "./vendor/space-grotesk-latin.woff2",
+  "./vendor/space-grotesk-latin-ext.woff2"
 ];
 
 self.addEventListener("install", (event) => {
@@ -35,22 +37,38 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
   if (url.origin === self.location.origin) {
-    event.respondWith(cacheFirst(event.request));
+    event.respondWith(staleWhileRevalidate(event.request));
   } else {
     event.respondWith(networkWithCache(event.request));
   }
 });
 
-async function cacheFirst(request) {
+/**
+ * Réponse immédiate depuis le cache (rapidité + hors-ligne), mise à jour en
+ * arrière-plan depuis le réseau : les nouvelles versions de l'app sont
+ * récupérées automatiquement et servies au chargement suivant.
+ */
+async function staleWhileRevalidate(request) {
   const cache = await caches.open(CACHE_NAME);
   const cached = await cache.match(request);
-  if (cached) return cached;
+  const network = fetch(request)
+    .then((response) => {
+      if (response && response.ok) {
+        cache.put(request, response.clone());
+      }
+      return response;
+    })
+    .catch(() => null);
 
-  const response = await fetch(request);
-  if (response && response.ok) {
-    cache.put(request, response.clone());
+  if (cached) return cached;
+  const response = await network;
+  if (response) return response;
+  // Navigation hors-ligne vers une URL non précachée : sert l'app.
+  if (request.mode === "navigate") {
+    const fallback = await cache.match("./index.html");
+    if (fallback) return fallback;
   }
-  return response;
+  return Response.error();
 }
 
 async function networkWithCache(request) {

@@ -14,16 +14,28 @@ données restent dans le navigateur (`localStorage`).
   (Chart.js) coûts par personne et cadeaux par lieu.
 - **6 thèmes** (Noël, Saint-Valentin, Anniversaire, etc.) avec fonds animés.
 - **Sauvegarde & partage** :
+  - 🔗 **Partager par lien** : vos proches ouvrent la liste en lecture seule
+    dans leur navigateur (les données voyagent compressées dans le lien,
+    jamais sur un serveur) et peuvent la fusionner dans leur propre
+    application — pratique pour se coordonner et éviter les cadeaux en double.
+  - 📤 **Partager un résumé** lisible (via le partage natif du téléphone ou le
+    presse-papier).
   - 💾 **Exporter** une sauvegarde JSON complète.
   - 📥 **Importer** une sauvegarde JSON ou un fichier CSV/TSV (fusion sans
-    doublon, aucune donnée écrasée).
-  - 📤 **Partager** un résumé lisible de la liste (via le partage natif du
-    téléphone ou le presse-papier).
+    doublon, aucune donnée écrasée ; champs entre guillemets et prix français
+    « 39,90 » acceptés).
+- **Anti-doublon** : alerte si un cadeau identique existe déjà pour la même
+  personne ; bouton « Dupliquer » pour réutiliser un cadeau comme modèle.
 - **Annulation de suppression** (bouton « Annuler » après un retrait).
-- **Hors-ligne** : installable en PWA, fonctionne sans connexion après la
-  première visite (service worker).
-- **Responsive & accessible** : optimisée mobile et ordinateur, navigation
-  clavier, focus piégé dans les fenêtres, respect de « animations réduites ».
+- **Hors-ligne & 100 % autonome** : installable en PWA, aucune ressource
+  externe (Chart.js et la police sont embarqués), fonctionne sans connexion
+  après la première visite et se met à jour automatiquement au chargement
+  suivant.
+- **Multi-onglets** : les modifications faites dans un onglet apparaissent
+  dans les autres (pas d'écrasement croisé).
+- **Responsive & accessible** : optimisée mobile (filtres repliables) et
+  ordinateur, navigation clavier, focus piégé dans les fenêtres, respect de
+  « animations réduites ».
 
 ## 🚀 Lancer en local
 
@@ -50,9 +62,11 @@ de les effacer.
 
 ## 🔐 Confidentialité
 
-Aucune donnée n'est envoyée à un serveur. Seule ressource externe : la
-bibliothèque Chart.js (CDN), mise en cache pour l'usage hors-ligne. Les liens de
-produits sont assainis (seuls `http`/`https` sont autorisés).
+Aucune donnée n'est envoyée à un serveur et aucune ressource externe n'est
+chargée (Chart.js et la police Space Grotesk sont servis localement depuis
+`vendor/`). Le partage par lien encode les données dans le fragment d'URL
+(`#s=…`), qui n'est jamais transmis au serveur web. Les liens de produits sont
+assainis (seuls `http`/`https` sont autorisés).
 
 ## 🗂️ Structure
 
@@ -62,8 +76,9 @@ produits sont assainis (seuls `http`/`https` sont autorisés).
 | `style.css` | Thèmes et mise en page |
 | `app.js` | Logique, stockage, import/export, accessibilité |
 | `charts.js` | Graphiques du tableau de bord |
-| `service-worker.js` | Cache hors-ligne (PWA) |
+| `service-worker.js` | Cache hors-ligne (PWA, stale-while-revalidate) |
 | `manifest.json` | Métadonnées PWA |
+| `vendor/` | Dépendances embarquées : Chart.js 4.5.1, police Space Grotesk |
 
 ## 🎨 Ajouter un thème
 

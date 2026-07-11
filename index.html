@@ -8,9 +8,7 @@
   <meta name="theme-color" content="#0f3d3e">
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230f3d3e'/%3E%3Cpath d='M20 20h24v24H20z' fill='%2373ffc6'/%3E%3Cpath d='M18 30h28v4H18zM30 18h4v28h-4z' fill='%2300c389'/%3E%3Ccircle cx='32' cy='12' r='6' fill='%23ff7a6a'/%3E%3C/svg%3E">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="preload" href="vendor/space-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -59,12 +57,22 @@
           <input id="importFileInput" type="file" accept=".json,.csv,.tsv,.txt,application/json,text/csv" hidden>
         </div>
 
+        <div id="sharedBanner" class="shared-banner" hidden>
+          <p><strong>🎁 Liste partagée</strong> — vous consultez la liste d'un proche (lecture seule).</p>
+          <div class="shared-banner-actions">
+            <button id="sharedImportBtn" class="primary-btn" type="button">Ajouter à ma liste</button>
+            <button id="sharedExitBtn" class="ghost-btn" type="button">Voir ma liste</button>
+          </div>
+        </div>
+
         <div class="search-row">
           <span class="search-icon" aria-hidden="true">🔍</span>
           <input id="searchInput" type="search" placeholder="Rechercher un cadeau, un nom, un lieu…" aria-label="Rechercher dans la liste" autocomplete="off">
         </div>
 
-        <div class="filters">
+        <button id="toggleFiltersBtn" class="ghost-btn filters-toggle" type="button" aria-expanded="false" aria-controls="filtersBlock">Filtres &amp; tri</button>
+
+        <div id="filtersBlock" class="filters">
           <label>
             Nom
             <select id="filterRecipient">
@@ -107,7 +115,7 @@
             Trier par
             <select id="sortGifts">
               <option value="">Par défaut</option>
-              <option value="progress_desc">Progression</option>
+              <option value="progress_desc">À terminer d'abord</option>
               <option value="name_asc">Nom</option>
               <option value="location_asc">Lieu</option>
             </select>
@@ -137,6 +145,7 @@
             <p class="eyebrow">Création</p>
             <h2>Ajouter ou modifier un cadeau</h2>
           </div>
+          <button id="backToListBtn" class="ghost-btn" type="button">← Retour à la liste</button>
         </div>
         <form id="giftForm" class="form">
           <input type="hidden" id="giftId">
@@ -302,6 +311,10 @@
         </div>
       </section>
     </main>
+
+    <footer class="app-footer muted">
+      <p>Atelier Noël · v2.0 · Vos données restent sur cet appareil — pensez à exporter une sauvegarde 💾</p>
+    </footer>
   </div>
 
   <div id="snackbar" class="snackbar" role="status" aria-live="polite"></div>
@@ -319,6 +332,21 @@
     </div>
   </div>
 
+  <div id="shareDialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="shareTitle">Partager la liste</h3>
+        <button id="shareClose" class="modal-close" type="button" aria-label="Fermer">×</button>
+      </div>
+      <div class="share-options">
+        <button id="shareLinkBtn" class="primary-btn" type="button">🔗 Envoyer un lien de consultation</button>
+        <p class="muted">Vos proches ouvrent votre liste en lecture seule dans leur navigateur, sans rien installer, et peuvent l'ajouter à leur propre application. Les données voyagent dans le lien, jamais sur un serveur.</p>
+        <button id="shareTextBtn" class="ghost-btn" type="button">📝 Envoyer un résumé texte</button>
+        <p class="muted">Un récapitulatif lisible (cadeaux par personne), idéal pour un message rapide.</p>
+      </div>
+    </div>
+  </div>
+
   <div id="themeDialog" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="themeTitle">
     <div class="modal theme-modal">
       <div class="modal-header">
@@ -329,7 +357,7 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="vendor/chart.umd.min.js"></script>
   <script src="charts.js"></script>
   <script src="app.js"></script>
 </body>
