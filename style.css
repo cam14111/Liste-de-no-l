@@ -1,3 +1,22 @@
+/* Police auto-hébergée (Space Grotesk, licence OFL) : aucune requête externe */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("vendor/space-grotesk-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("vendor/space-grotesk-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 :root {
   /* Nouvelles variables thème (valeurs par défaut = Noël) */
   --color-primary: #0f3d3e;
@@ -271,6 +290,68 @@ p {
   gap: 10px;
   margin-bottom: 16px;
   align-items: end;
+}
+
+/* Bouton « Filtres & tri » : visible uniquement sur mobile */
+.filters-toggle {
+  display: none;
+  width: 100%;
+  margin-bottom: 12px;
+}
+
+/* Bannière de consultation d'une liste partagée */
+.shared-banner[hidden] {
+  display: none;
+}
+
+.shared-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px;
+  margin-bottom: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.shared-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Mode lecture seule : masque toutes les actions d'édition */
+body.shared-mode #goToFormBtn,
+body.shared-mode #exportBtn,
+body.shared-mode #importBtn,
+body.shared-mode #shareBtn,
+body.shared-mode .gift-actions,
+body.shared-mode #formPanel {
+  display: none !important;
+}
+
+.share-options {
+  display: grid;
+  gap: 10px;
+}
+
+.share-options .primary-btn,
+.share-options .ghost-btn {
+  width: 100%;
+}
+
+.share-options .muted {
+  font-size: 0.9rem;
+  margin-bottom: 6px;
+}
+
+.app-footer {
+  text-align: center;
+  font-size: 0.85rem;
+  padding: 18px 12px 4px;
 }
 
 .gift-link {
@@ -1128,6 +1209,19 @@ select option:disabled {
 
   .panel {
     padding: 12px;
+  }
+
+  /* Filtres repliés par défaut sur mobile pour laisser la place à la liste */
+  .filters-toggle {
+    display: block;
+  }
+
+  .filters {
+    display: none;
+  }
+
+  .filters.open {
+    display: grid;
   }
 
   .gift-list {

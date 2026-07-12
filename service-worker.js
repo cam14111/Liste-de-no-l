@@ -1,4 +1,4 @@
-const CACHE_NAME = "xmas-gifts-cache-v3";
+const CACHE_NAME = "xmas-gifts-cache-v6";
 const APP_ASSETS = [
   "./",
   "./index.html",
@@ -6,7 +6,9 @@ const APP_ASSETS = [
   "./app.js",
   "./charts.js",
   "./manifest.json",
-  "https://cdn.jsdelivr.net/npm/chart.js"
+  "./vendor/chart.umd.min.js",
+  "./vendor/space-grotesk-latin.woff2",
+  "./vendor/space-grotesk-latin-ext.woff2"
 ];
 
 self.addEventListener("install", (event) => {
@@ -41,16 +43,34 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+/**
+ * Cache-first pour les assets de l'app (rapide, zéro réseau hors-ligne). Les
+ * mises à jour arrivent via le changement de CACHE_NAME : le nouveau service
+ * worker pré-cache tous les assets à l'installation puis prend le contrôle
+ * (skipWaiting + clients.claim), servant la version à jour au chargement
+ * suivant — sans re-télécharger la coquille à chaque ouverture ni risquer de
+ * mélanger d'anciens et de nouveaux fichiers.
+ */
 async function cacheFirst(request) {
   const cache = await caches.open(CACHE_NAME);
   const cached = await cache.match(request);
   if (cached) return cached;
 
-  const response = await fetch(request);
-  if (response && response.ok) {
-    cache.put(request, response.clone());
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (err) {
+    // Navigation hors-ligne vers une URL non précachée (ex: lien de partage
+    // #s=…) : on sert la coquille de l'app.
+    if (request.mode === "navigate") {
+      const fallback = await cache.match("./index.html");
+      if (fallback) return fallback;
+    }
+    throw err;
   }
-  return response;
 }
 
 async function networkWithCache(request) {

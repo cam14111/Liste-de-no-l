@@ -3,6 +3,8 @@ const STORAGE_META_KEY = "xmas-gifts-meta-v1";
 const THEME_STORAGE_KEY = "appThemeId";
 const DEFAULT_THEME_ID = "noel";
 const SCHEMA_VERSION = 1;
+const APP_VERSION = "2.0.0";
+const SHARE_HASH_PREFIX = "#s=";
 
 // Valeurs de statut autorisées (source de vérité pour la validation)
 const PURCHASE_VALUES = ["to_buy", "bought"];
@@ -88,8 +90,8 @@ function normalizeGift(raw) {
   const giftName = typeof raw.giftName === "string" ? raw.giftName.trim() : "";
   if (!recipient || !location || !giftName) return null;
 
-  let price = Number.isFinite(raw.price) ? raw.price : parseFloat(raw.price);
-  if (!Number.isFinite(price) || price < 0) price = 0;
+  // parsePrice couvre nombres et chaînes (négatifs/NaN → 0).
+  const price = parsePrice(raw.price);
 
   const now = new Date().toISOString();
   return {
@@ -324,6 +326,16 @@ const themeClose = document.getElementById("themeClose");
 const recipientSelect = document.getElementById("recipient");
 const locationSelect = document.getElementById("location");
 
+const shareDialog = document.getElementById("shareDialog");
+const shareClose = document.getElementById("shareClose");
+const shareLinkBtn = document.getElementById("shareLinkBtn");
+const shareTextBtn = document.getElementById("shareTextBtn");
+const sharedBanner = document.getElementById("sharedBanner");
+const sharedImportBtn = document.getElementById("sharedImportBtn");
+const sharedExitBtn = document.getElementById("sharedExitBtn");
+const toggleFiltersBtn = document.getElementById("toggleFiltersBtn");
+const filtersBlock = document.getElementById("filtersBlock");
+
 const searchInput = document.getElementById("searchInput");
 const filterRecipient = document.getElementById("filterRecipient");
 const filterLocation = document.getElementById("filterLocation");
@@ -353,6 +365,14 @@ let state = {
 let confirmResolver = null;
 let lastFocusedElement = null;
 let snackbarTimer = null;
+
+/**
+ * Mode « liste partagée » : la liste reçue via un lien (#s=...) remplace
+ * temporairement l'état en mémoire, en lecture seule. Aucune écriture
+ * localStorage tant que ce mode est actif ; on recharge les données
+ * personnelles depuis le stockage en quittant.
+ */
+let sharedMode = false;
 
 const statusLabels = {
   purchase: {
@@ -404,7 +424,9 @@ function init() {
   renderManagedLists();
   renderGiftList();
   renderDashboard();
+  updateFiltersToggleCount();
   registerServiceWorker();
+  maybeEnterSharedModeFromHash();
 }
 
 function bindEvents() {
@@ -412,7 +434,16 @@ function bindEvents() {
     tab.addEventListener("click", () => switchPanel(tab.dataset.target));
   });
 
-  document.getElementById("goToFormBtn").addEventListener("click", () => switchPanel("formPanel"));
+  document.getElementById("goToFormBtn").addEventListener("click", () => {
+    // Repart d'un formulaire vierge si une édition avait été abandonnée.
+    if (state.editingId) resetForm();
+    switchPanel("formPanel");
+  });
+
+  document.getElementById("backToListBtn")?.addEventListener("click", () => {
+    resetForm();
+    switchPanel("listPanel");
+  });
 
   document.getElementById("clearFiltersBtn").addEventListener("click", () => {
     if (searchInput) searchInput.value = "";
@@ -422,11 +453,39 @@ function bindEvents() {
     filterDelivery.value = "";
     filterWrap.value = "";
     if (sortGifts) sortGifts.value = "";
+    updateFiltersToggleCount();
     renderGiftList();
   });
 
   [filterRecipient, filterLocation, filterPurchase, filterDelivery, filterWrap].forEach((select) => {
-    select.addEventListener("change", renderGiftList);
+    select.addEventListener("change", () => {
+      updateFiltersToggleCount();
+      renderGiftList();
+    });
+  });
+
+  toggleFiltersBtn?.addEventListener("click", () => {
+    const open = filtersBlock?.classList.toggle("open");
+    toggleFiltersBtn.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+
+  // Synchronisation entre onglets/fenêtres : recharge l'état si un autre
+  // onglet a modifié les données (évite les écrasements croisés).
+  window.addEventListener("storage", (event) => {
+    if (event.key !== STORAGE_KEY && event.key !== STORAGE_META_KEY) return;
+    if (sharedMode) return;
+    reloadStateFromStorage();
+  });
+
+  // Permet d'ouvrir un lien de partage collé dans un onglet déjà ouvert.
+  window.addEventListener("hashchange", () => {
+    if (!sharedMode) maybeEnterSharedModeFromHash();
+  });
+
+  sharedImportBtn?.addEventListener("click", importSharedList);
+  sharedExitBtn?.addEventListener("click", () => {
+    exitSharedMode();
+    showMessage("Retour à votre liste.");
   });
 
   searchInput?.addEventListener("input", renderGiftList);
@@ -438,7 +497,19 @@ function bindEvents() {
   });
 
   exportBtn?.addEventListener("click", exportData);
-  shareBtn?.addEventListener("click", shareSummary);
+  shareBtn?.addEventListener("click", openShareDialog);
+  shareClose?.addEventListener("click", closeShareDialog);
+  shareDialog?.addEventListener("click", (event) => {
+    if (event.target === shareDialog) closeShareDialog();
+  });
+  shareLinkBtn?.addEventListener("click", async () => {
+    closeShareDialog();
+    await shareByLink();
+  });
+  shareTextBtn?.addEventListener("click", async () => {
+    closeShareDialog();
+    await shareSummary();
+  });
   importBtn?.addEventListener("click", () => importFileInput?.click());
   importFileInput?.addEventListener("change", (event) => {
     const file = event.target.files && event.target.files[0];
@@ -446,7 +517,10 @@ function bindEvents() {
     event.target.value = ""; // permet de réimporter le même fichier
   });
 
-  sortGifts?.addEventListener("change", renderGiftList);
+  sortGifts?.addEventListener("change", () => {
+    updateFiltersToggleCount();
+    renderGiftList();
+  });
   costSortSelect?.addEventListener("change", renderDashboard);
   locationSortSelect?.addEventListener("change", renderDashboard);
 
@@ -492,6 +566,9 @@ function bindEvents() {
       }
       if (themeDialog?.classList.contains("show")) {
         closeThemeDialog();
+      }
+      if (shareDialog?.classList.contains("show")) {
+        closeShareDialog();
       }
     }
   });
@@ -540,6 +617,14 @@ function bindEvents() {
 
 function loadData() {
   const savedGifts = storage.get(STORAGE_KEY);
+  const savedMeta = storage.get(STORAGE_META_KEY);
+  // Premier lancement réel = aucune donnée déjà stockée ET arrivée directe
+  // (pas via un lien de partage). On ne génère les cadeaux d'exemple que dans
+  // ce cas : un visiteur venu consulter le lien d'un proche ne doit pas se
+  // retrouver avec des cadeaux fantômes dans son stockage, ni au moment de la
+  // consultation, ni plus tard en ajoutant la liste à la sienne.
+  const firstRun = !savedGifts && !savedMeta && !hasIncomingShareLink();
+
   if (savedGifts) {
     try {
       const parsed = JSON.parse(savedGifts);
@@ -562,12 +647,13 @@ function loadData() {
       state.gifts = [];
       showMessage("Données illisibles : une sauvegarde de secours a été créée.");
     }
-  } else {
+  } else if (firstRun) {
     state.gifts = getSeedData();
     persist();
+  } else {
+    state.gifts = [];
   }
 
-  const savedMeta = storage.get(STORAGE_META_KEY);
   if (savedMeta) {
     try {
       const parsed = JSON.parse(savedMeta);
@@ -591,10 +677,12 @@ function loadData() {
 }
 
 function persist() {
+  if (sharedMode) return;
   storage.set(STORAGE_KEY, JSON.stringify(state.gifts));
 }
 
 function persistMeta() {
+  if (sharedMode) return;
   storage.set(
     STORAGE_META_KEY,
     JSON.stringify({
@@ -679,8 +767,9 @@ function getSeedData() {
   ];
 }
 
-function handleSubmit(event) {
+async function handleSubmit(event) {
   event.preventDefault();
+  if (sharedMode) return;
 
   const parsedPrice = parseFloat(form.price.value);
   const payload = {
@@ -699,6 +788,19 @@ function handleSubmit(event) {
   if (!payload.recipient || !payload.location || !payload.giftName) {
     showMessage("Complète les champs obligatoires.");
     return;
+  }
+
+  // Anti-doublon : prévient si un cadeau identique existe déjà (même
+  // personne, même lieu, même intitulé) lors d'une création.
+  if (!state.editingId) {
+    const key = giftKey(payload);
+    if (state.gifts.some((gift) => giftKey(gift) === key)) {
+      const confirmed = await openConfirmDialog(
+        "Un cadeau identique existe déjà pour cette personne. L'ajouter quand même ?",
+        "Ajouter quand même"
+      );
+      if (!confirmed) return;
+    }
   }
 
   syncListsWithGift(payload);
@@ -1004,8 +1106,12 @@ function renderGiftList() {
   giftListEl.querySelectorAll("button[data-action]").forEach((btn) => {
     btn.addEventListener("click", (event) => {
       const id = event.currentTarget.dataset.id;
-      if (event.currentTarget.dataset.action === "edit") {
+      const action = event.currentTarget.dataset.action;
+      if (action === "edit") {
         populateForm(id);
+        switchPanel("formPanel");
+      } else if (action === "duplicate") {
+        duplicateGift(id);
         switchPanel("formPanel");
       } else {
         openConfirmDialog("Supprimer ce cadeau ?").then((confirmed) => {
@@ -1055,10 +1161,13 @@ function buildGiftCardElement(gift) {
         </div>
       </div>
       <div class="gift-actions">
-        <button class="ghost-btn icon-btn" data-action="edit" data-id="${safeId}" aria-label="Modifier « ${escapeHtml(gift.giftName)} »">
+        <button class="ghost-btn icon-btn" data-action="edit" data-id="${safeId}" aria-label="Modifier « ${escapeHtml(gift.giftName)} »" title="Modifier">
           <span class="btn-icon" aria-hidden="true">&#9998;</span>
         </button>
-        <button class="ghost-btn icon-btn" data-action="delete" data-id="${safeId}" aria-label="Supprimer « ${escapeHtml(gift.giftName)} »">
+        <button class="ghost-btn icon-btn" data-action="duplicate" data-id="${safeId}" aria-label="Dupliquer « ${escapeHtml(gift.giftName)} »" title="Dupliquer">
+          <span class="btn-icon" aria-hidden="true">&#10697;</span>
+        </button>
+        <button class="ghost-btn icon-btn" data-action="delete" data-id="${safeId}" aria-label="Supprimer « ${escapeHtml(gift.giftName)} »" title="Supprimer">
           <span class="btn-icon" aria-hidden="true">&#128465;</span>
         </button>
       </div>
@@ -1080,8 +1189,24 @@ function buildGiftCardElement(gift) {
 function buildBadge(type, value, giftId) {
   const label = statusLabels[type]?.[value] || value;
   const tone = statusTone[type]?.[value] || "";
+  if (sharedMode) {
+    // Lecture seule : badge informatif, non focusable, non cliquable.
+    return `<span class="badge ${tone || ""}" aria-label="${statusFieldLabels[type] || "Statut"}: ${label}">${label}</span>`;
+  }
   const ariaLabel = `${statusFieldLabels[type] || "Statut"}: ${label}. Cliquer pour changer`;
   return `<span class="badge ${tone || ""} status-badge" role="button" tabindex="0" data-type="${type}" data-id="${giftId}" data-value="${value}" aria-label="${ariaLabel}">${label}</span>`;
+}
+
+/** Ajoute une option manquante à un select (ex: nom retiré des listes maîtres). */
+function ensureSelectOption(select, value) {
+  if (!select || !value) return;
+  const exists = Array.from(select.options).some((opt) => opt.value === value);
+  if (!exists) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  }
 }
 
 function populateForm(id) {
@@ -1089,10 +1214,12 @@ function populateForm(id) {
   if (!gift) return;
 
   state.editingId = id;
+  ensureSelectOption(recipientSelect, gift.recipient);
+  ensureSelectOption(locationSelect, gift.location);
   form.recipient.value = gift.recipient;
   form.location.value = gift.location;
   form.giftName.value = gift.giftName;
-  form.price.value = gift.price;
+  form.price.value = gift.price || "";
   form.purchaseStatus.value = gift.purchaseStatus;
   form.deliveryStatus.value = gift.deliveryStatus;
   form.wrapStatus.value = gift.wrapStatus;
@@ -1101,7 +1228,20 @@ function populateForm(id) {
   document.getElementById("submitBtn").textContent = "Mettre à jour";
 }
 
+/** Pré-remplit le formulaire à partir d'un cadeau existant, en mode création. */
+function duplicateGift(id) {
+  populateForm(id);
+  state.editingId = null;
+  // Statuts remis à zéro : le nouveau cadeau repart de « à acheter ».
+  form.purchaseStatus.value = "to_buy";
+  form.deliveryStatus.value = "none";
+  form.wrapStatus.value = "not_wrapped";
+  document.getElementById("submitBtn").textContent = "Enregistrer";
+  showMessage("Copie prête : ajustez puis enregistrez.");
+}
+
 function deleteGift(id) {
+  if (sharedMode) return;
   const index = state.gifts.findIndex((gift) => gift.id === id);
   if (index === -1) return;
   const [removed] = state.gifts.splice(index, 1);
@@ -1113,6 +1253,7 @@ function deleteGift(id) {
   showMessage("Cadeau supprimé.", {
     label: "Annuler",
     onClick: () => {
+      if (sharedMode) return; // l'état a changé de contexte entre-temps
       const at = Math.min(index, state.gifts.length);
       state.gifts.splice(at, 0, removed);
       syncListsWithGift(removed);
@@ -1244,6 +1385,7 @@ function handleBadgeKeydown(event) {
 }
 
 function cycleBadgeStatus(badge) {
+  if (sharedMode) return;
   const { type, id, value } = badge.dataset;
   if (!type || !id) return;
 
@@ -1255,13 +1397,14 @@ function cycleBadgeStatus(badge) {
   updateGiftStatus(id, type, nextValue);
 }
 
-function openConfirmDialog(message) {
+function openConfirmDialog(message, okLabel = "Supprimer") {
   if (!confirmDialog || !confirmMessage) {
     return Promise.resolve(false);
   }
 
   lastFocusedElement = document.activeElement;
   confirmMessage.textContent = message;
+  if (confirmOk) confirmOk.textContent = okLabel;
   confirmDialog.classList.add("show");
   confirmOk?.focus();
 
@@ -1283,6 +1426,7 @@ function resolveConfirm(result) {
 function getOpenModal() {
   if (confirmDialog?.classList.contains("show")) return confirmDialog;
   if (themeDialog?.classList.contains("show")) return themeDialog;
+  if (shareDialog?.classList.contains("show")) return shareDialog;
   return null;
 }
 
@@ -1350,7 +1494,274 @@ function closeThemeDialog() {
   restoreFocus();
 }
 
+// ---------------------------------------------------------------------------
+// Partage
+// ---------------------------------------------------------------------------
+
+function openShareDialog() {
+  if (!state.gifts.length) {
+    showMessage("Aucun cadeau à partager.");
+    return;
+  }
+  lastFocusedElement = document.activeElement;
+  shareDialog?.classList.add("show");
+  shareLinkBtn?.focus();
+}
+
+function closeShareDialog() {
+  if (!shareDialog?.classList.contains("show")) return;
+  shareDialog.classList.remove("show");
+  restoreFocus();
+}
+
+/** Encode des octets en base64url (sans caractères réservés d'URL). */
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function base64UrlToBytes(value) {
+  const b64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "===".slice((b64.length + 3) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * Sérialise un texte pour le fragment d'URL. Compresse en deflate quand le
+ * navigateur le permet (préfixe "1."), sinon base64 simple (préfixe "0.").
+ */
+async function encodeSharePayload(text) {
+  const bytes = new TextEncoder().encode(text);
+  if (typeof CompressionStream === "function") {
+    try {
+      const stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+      const buffer = await new Response(stream).arrayBuffer();
+      return "1." + bytesToBase64Url(new Uint8Array(buffer));
+    } catch (e) {
+      /* repli non compressé ci-dessous */
+    }
+  }
+  return "0." + bytesToBase64Url(bytes);
+}
+
+async function decodeSharePayload(payload) {
+  const dot = payload.indexOf(".");
+  if (dot === -1) throw new Error("Format de lien inconnu");
+  const mode = payload.slice(0, dot);
+  const bytes = base64UrlToBytes(payload.slice(dot + 1));
+  if (mode === "1") {
+    if (typeof DecompressionStream !== "function") {
+      throw new Error("Navigateur trop ancien pour ce lien");
+    }
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return await new Response(stream).text();
+  }
+  return new TextDecoder().decode(bytes);
+}
+
+/** Construit l'URL de partage (données compressées dans le fragment, jamais envoyées au serveur). */
+async function buildShareLink() {
+  const payload = {
+    v: SCHEMA_VERSION,
+    gifts: state.gifts,
+    recipients: state.recipients,
+    locations: state.locations,
+  };
+  const encoded = await encodeSharePayload(JSON.stringify(payload));
+  return `${location.origin}${location.pathname}${SHARE_HASH_PREFIX}${encoded}`;
+}
+
+/** Partage le lien interactif via l'API Web Share, sinon copie dans le presse-papier. */
+async function shareByLink() {
+  if (!state.gifts.length) {
+    showMessage("Aucun cadeau à partager.");
+    return;
+  }
+  let url;
+  try {
+    url = await buildShareLink();
+  } catch (e) {
+    console.error("Lien de partage impossible", e);
+    showMessage("Impossible de générer le lien sur cet appareil.");
+    return;
+  }
+  if (url.length > 30000) {
+    showMessage("Liste trop volumineuse pour un lien : utilisez l'export JSON.");
+    return;
+  }
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: "Ma liste de cadeaux", url });
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;
+  }
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(url);
+      showMessage("Lien copié : envoyez-le à vos proches.");
+      return;
+    }
+  } catch (e) {
+    /* repli ci-dessous */
+  }
+  window.prompt("Copiez ce lien de partage :", url);
+}
+
+// ---------------------------------------------------------------------------
+// Mode « liste partagée » (consultation d'un lien reçu)
+// ---------------------------------------------------------------------------
+
+/** Vrai si l'URL courante porte un lien de partage (#s=…). */
+function hasIncomingShareLink() {
+  return (window.location.hash || "").startsWith(SHARE_HASH_PREFIX);
+}
+
+/** Détecte un lien de partage dans l'URL et bascule en consultation. */
+function maybeEnterSharedModeFromHash() {
+  const hash = window.location.hash || "";
+  if (!hash.startsWith(SHARE_HASH_PREFIX)) return;
+  const encoded = hash.slice(SHARE_HASH_PREFIX.length);
+  decodeSharePayload(encoded)
+    .then((text) => {
+      const parsed = JSON.parse(text);
+      const gifts = Array.isArray(parsed?.gifts) ? parsed.gifts.map(normalizeGift).filter(Boolean) : [];
+      if (!gifts.length) throw new Error("Liste vide");
+      enterSharedMode({
+        gifts,
+        recipients: Array.isArray(parsed.recipients) ? parsed.recipients.filter((v) => typeof v === "string" && v.trim()) : [],
+        locations: Array.isArray(parsed.locations) ? parsed.locations.filter((v) => typeof v === "string" && v.trim()) : [],
+      });
+    })
+    .catch((e) => {
+      console.error("Lien de partage illisible", e);
+      clearShareHash();
+      showMessage("Ce lien de partage est invalide ou incomplet.");
+    });
+}
+
+function clearShareHash() {
+  history.replaceState(null, "", window.location.pathname + window.location.search);
+}
+
+function enterSharedMode(shared) {
+  // Neutralise une éventuelle action « Annuler » en attente (sa closure
+  // référence l'ancien state) et remet le formulaire à zéro avant de
+  // remplacer l'état par la liste partagée.
+  hideSnackbar();
+  resetForm();
+  sharedMode = true;
+  state = {
+    gifts: shared.gifts,
+    editingId: null,
+    recipients: shared.recipients,
+    locations: shared.locations,
+  };
+  document.body.classList.add("shared-mode");
+  if (sharedBanner) sharedBanner.hidden = false;
+  switchPanel("listPanel");
+  renderFilters();
+  renderManagedLists();
+  renderGiftList();
+  renderDashboard();
+}
+
+/** Quitte la consultation et recharge les données personnelles du stockage. */
+function exitSharedMode() {
+  sharedMode = false;
+  document.body.classList.remove("shared-mode");
+  if (sharedBanner) sharedBanner.hidden = true;
+  clearShareHash();
+  state = { gifts: [], editingId: null, recipients: [], locations: [] };
+  loadData();
+  renderFilters();
+  renderManagedLists();
+  renderGiftList();
+  renderDashboard();
+}
+
+/** Fusionne la liste partagée dans la liste personnelle (sans doublon). */
+function importSharedList() {
+  if (!sharedMode) return;
+  const sharedGifts = state.gifts.slice();
+  const sharedRecipients = state.recipients.slice();
+  const sharedLocations = state.locations.slice();
+  exitSharedMode();
+  mergeMasterLists(sharedRecipients, "recipients");
+  mergeMasterLists(sharedLocations, "locations");
+  const result = importGiftsArray(sharedGifts);
+  if (!result.imported) {
+    // Aucun cadeau ajouté : importGiftsArray n'a rien re-rendu, mais des
+    // noms/lieux ont pu être fusionnés — on rafraîchit filtres et listes.
+    renderFilters();
+    renderManagedLists();
+    showMessage("Ces cadeaux sont déjà dans votre liste.");
+  } else {
+    showMessage(`${result.imported} cadeau·x ajouté·s à votre liste.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Synchronisation multi-onglets
+// ---------------------------------------------------------------------------
+
+/** Recharge l'état depuis localStorage après une écriture d'un autre onglet. */
+function reloadStateFromStorage() {
+  try {
+    const parsed = JSON.parse(storage.get(STORAGE_KEY) || "[]");
+    if (Array.isArray(parsed)) {
+      state.gifts = parsed.map(normalizeGift).filter(Boolean);
+    }
+  } catch (e) {
+    console.error("Synchronisation des cadeaux impossible", e);
+  }
+  try {
+    const meta = JSON.parse(storage.get(STORAGE_META_KEY) || "{}");
+    state.recipients = Array.isArray(meta.recipients)
+      ? meta.recipients.filter((v) => typeof v === "string" && v.trim())
+      : state.recipients;
+    state.locations = Array.isArray(meta.locations)
+      ? meta.locations.filter((v) => typeof v === "string" && v.trim())
+      : state.locations;
+  } catch (e) {
+    console.error("Synchronisation des listes impossible", e);
+  }
+  // Une édition en cours dans cet onglet a priorité : on ne reconstruit pas
+  // les selects du formulaire (cela effacerait la saisie non enregistrée),
+  // sauf si le cadeau édité a disparu (supprimé depuis un autre onglet).
+  const editingStillExists = state.editingId && state.gifts.some((gift) => gift.id === state.editingId);
+  if (state.editingId && !editingStillExists) {
+    resetForm();
+  }
+  renderFilters();
+  if (!editingStillExists) {
+    renderManagedLists();
+  } else {
+    renderTagList(recipientTagList, state.recipients, "recipients");
+    renderTagList(locationTagList, state.locations, "locations");
+  }
+  renderGiftList();
+  renderDashboard();
+}
+
+/** Affiche le nombre de filtres actifs sur le bouton mobile « Filtres & tri ». */
+function updateFiltersToggleCount() {
+  if (!toggleFiltersBtn) return;
+  const active = [filterRecipient, filterLocation, filterPurchase, filterDelivery, filterWrap, sortGifts]
+    .filter((select) => select && select.value).length;
+  toggleFiltersBtn.textContent = active ? `Filtres & tri (${active})` : "Filtres & tri";
+}
+
 function updateGiftStatus(id, type, value) {
+  if (sharedMode) return;
   const keyMap = {
     purchase: "purchaseStatus",
     delivery: "deliveryStatus",
@@ -1521,10 +1932,16 @@ function importGiftData(rawText) {
     return { imported: 0, skipped: 0 };
   }
 
+  // Délimiteur déterminé une seule fois d'après l'en-tête : une valeur
+  // contenant un point-virgule ne doit pas faire basculer le découpage.
+  const delimiter = detectDelimiter(rows[0]);
+
   const rawGifts = rows.slice(1).map((row) => {
-    const cells = splitRow(row);
-    if (cells.length < 7) return null;
-    const [recipient, location, giftName, priceRaw, purchaseRaw, deliveryRaw, wrapRaw] = cells;
+    if (!row.trim()) return null;
+    const cells = splitRow(row, delimiter);
+    // Les 3 premières colonnes sont requises ; les statuts sont optionnels.
+    if (cells.length < 3) return null;
+    const [recipient = "", location = "", giftName = "", priceRaw = "", purchaseRaw = "", deliveryRaw = "", wrapRaw = ""] = cells;
     return {
       recipient: recipient.trim(),
       location: location.trim(),
@@ -1692,21 +2109,81 @@ async function shareSummary() {
   showMessage("Partage non disponible sur cet appareil.");
 }
 
-function splitRow(row) {
-  const withTabs = row.split(/\t/).filter((cell) => cell !== "");
-  if (withTabs.length > 1) return withTabs;
-
-  const withSemicolons = row.split(";").map((c) => c.trim());
-  if (withSemicolons.length > 1) return withSemicolons;
-
-  return row.split(",").map((c) => c.trim());
+/**
+ * Choisit le délimiteur d'un fichier d'après sa ligne d'en-tête : tabulation
+ * (TSV), sinon le séparateur le plus fréquent entre « ; » (CSV français) et
+ * « , ». Déterminé une fois pour tout le fichier afin qu'une valeur contenant
+ * un séparateur ne décale pas les colonnes des autres lignes.
+ */
+function detectDelimiter(headerRow) {
+  const header = headerRow || "";
+  if (header.includes("\t")) return "\t";
+  const semis = (header.match(/;/g) || []).length;
+  const commas = (header.match(/,/g) || []).length;
+  return semis >= commas && semis > 0 ? ";" : ",";
 }
 
+/**
+ * Découpe une ligne CSV/TSV en conservant les cellules vides (une cellule
+ * vide ne doit pas décaler les colonnes) et en gérant les champs entre
+ * guillemets ("" = guillemet échappé). Le délimiteur est fourni par
+ * detectDelimiter (constant sur tout le fichier).
+ */
+function splitRow(row, delimiter = detectDelimiter(row)) {
+  if (delimiter === "\t") {
+    return row.split("\t").map((cell) => cell.trim());
+  }
+  const cells = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < row.length; i++) {
+    const ch = row[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (row[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === delimiter) {
+      cells.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+/**
+ * Interprète un prix saisi librement : "39,90", "1 234,56", "1,234.56",
+ * "24.5 €"… Le dernier séparateur est traité comme décimal s'il est suivi
+ * d'au plus deux chiffres, sinon comme séparateur de milliers.
+ */
 function parsePrice(value) {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : 0;
   if (typeof value !== "string") return 0;
-  const normalized = value.replace(/[^\d,.-]/g, "").replace(",", "."); // keep last dot/comma as decimal
-  const num = parseFloat(normalized);
-  return Number.isFinite(num) ? num : 0;
+  let s = value.replace(/[^\d,.\-]/g, "");
+  if (!s) return 0;
+  const lastSep = Math.max(s.lastIndexOf(","), s.lastIndexOf("."));
+  if (lastSep !== -1) {
+    const fracLen = s.length - lastSep - 1;
+    const intPart = s.slice(0, lastSep).replace(/[,.]/g, "");
+    if (fracLen > 0 && fracLen <= 2) {
+      s = `${intPart}.${s.slice(lastSep + 1)}`;
+    } else {
+      s = intPart + s.slice(lastSep + 1);
+    }
+  }
+  const num = parseFloat(s);
+  return Number.isFinite(num) && num >= 0 ? num : 0;
 }
 
 function normalizePurchase(value) {
