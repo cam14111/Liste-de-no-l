@@ -1,4 +1,4 @@
-const CACHE_NAME = "xmas-gifts-cache-v5";
+const CACHE_NAME = "xmas-gifts-cache-v6";
 const APP_ASSETS = [
   "./",
   "./index.html",
@@ -37,38 +37,40 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
   if (url.origin === self.location.origin) {
-    event.respondWith(staleWhileRevalidate(event.request));
+    event.respondWith(cacheFirst(event.request));
   } else {
     event.respondWith(networkWithCache(event.request));
   }
 });
 
 /**
- * Réponse immédiate depuis le cache (rapidité + hors-ligne), mise à jour en
- * arrière-plan depuis le réseau : les nouvelles versions de l'app sont
- * récupérées automatiquement et servies au chargement suivant.
+ * Cache-first pour les assets de l'app (rapide, zéro réseau hors-ligne). Les
+ * mises à jour arrivent via le changement de CACHE_NAME : le nouveau service
+ * worker pré-cache tous les assets à l'installation puis prend le contrôle
+ * (skipWaiting + clients.claim), servant la version à jour au chargement
+ * suivant — sans re-télécharger la coquille à chaque ouverture ni risquer de
+ * mélanger d'anciens et de nouveaux fichiers.
  */
-async function staleWhileRevalidate(request) {
+async function cacheFirst(request) {
   const cache = await caches.open(CACHE_NAME);
   const cached = await cache.match(request);
-  const network = fetch(request)
-    .then((response) => {
-      if (response && response.ok) {
-        cache.put(request, response.clone());
-      }
-      return response;
-    })
-    .catch(() => null);
-
   if (cached) return cached;
-  const response = await network;
-  if (response) return response;
-  // Navigation hors-ligne vers une URL non précachée : sert l'app.
-  if (request.mode === "navigate") {
-    const fallback = await cache.match("./index.html");
-    if (fallback) return fallback;
+
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (err) {
+    // Navigation hors-ligne vers une URL non précachée (ex: lien de partage
+    // #s=…) : on sert la coquille de l'app.
+    if (request.mode === "navigate") {
+      const fallback = await cache.match("./index.html");
+      if (fallback) return fallback;
+    }
+    throw err;
   }
-  return Response.error();
 }
 
 async function networkWithCache(request) {

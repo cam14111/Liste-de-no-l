@@ -90,8 +90,8 @@ function normalizeGift(raw) {
   const giftName = typeof raw.giftName === "string" ? raw.giftName.trim() : "";
   if (!recipient || !location || !giftName) return null;
 
-  let price = typeof raw.price === "number" && Number.isFinite(raw.price) ? raw.price : parsePrice(raw.price);
-  if (!Number.isFinite(price) || price < 0) price = 0;
+  // parsePrice couvre nombres et chaînes (négatifs/NaN → 0).
+  const price = parsePrice(raw.price);
 
   const now = new Date().toISOString();
   return {
@@ -517,7 +517,10 @@ function bindEvents() {
     event.target.value = ""; // permet de réimporter le même fichier
   });
 
-  sortGifts?.addEventListener("change", renderGiftList);
+  sortGifts?.addEventListener("change", () => {
+    updateFiltersToggleCount();
+    renderGiftList();
+  });
   costSortSelect?.addEventListener("change", renderDashboard);
   locationSortSelect?.addEventListener("change", renderDashboard);
 
@@ -614,6 +617,14 @@ function bindEvents() {
 
 function loadData() {
   const savedGifts = storage.get(STORAGE_KEY);
+  const savedMeta = storage.get(STORAGE_META_KEY);
+  // Premier lancement réel = aucune donnée déjà stockée ET arrivée directe
+  // (pas via un lien de partage). On ne génère les cadeaux d'exemple que dans
+  // ce cas : un visiteur venu consulter le lien d'un proche ne doit pas se
+  // retrouver avec des cadeaux fantômes dans son stockage, ni au moment de la
+  // consultation, ni plus tard en ajoutant la liste à la sienne.
+  const firstRun = !savedGifts && !savedMeta && !hasIncomingShareLink();
+
   if (savedGifts) {
     try {
       const parsed = JSON.parse(savedGifts);
@@ -636,12 +647,13 @@ function loadData() {
       state.gifts = [];
       showMessage("Données illisibles : une sauvegarde de secours a été créée.");
     }
-  } else {
+  } else if (firstRun) {
     state.gifts = getSeedData();
     persist();
+  } else {
+    state.gifts = [];
   }
 
-  const savedMeta = storage.get(STORAGE_META_KEY);
   if (savedMeta) {
     try {
       const parsed = JSON.parse(savedMeta);
@@ -1241,6 +1253,7 @@ function deleteGift(id) {
   showMessage("Cadeau supprimé.", {
     label: "Annuler",
     onClick: () => {
+      if (sharedMode) return; // l'état a changé de contexte entre-temps
       const at = Math.min(index, state.gifts.length);
       state.gifts.splice(at, 0, removed);
       syncListsWithGift(removed);
@@ -1607,6 +1620,11 @@ async function shareByLink() {
 // Mode « liste partagée » (consultation d'un lien reçu)
 // ---------------------------------------------------------------------------
 
+/** Vrai si l'URL courante porte un lien de partage (#s=…). */
+function hasIncomingShareLink() {
+  return (window.location.hash || "").startsWith(SHARE_HASH_PREFIX);
+}
+
 /** Détecte un lien de partage dans l'URL et bascule en consultation. */
 function maybeEnterSharedModeFromHash() {
   const hash = window.location.hash || "";
@@ -1635,6 +1653,11 @@ function clearShareHash() {
 }
 
 function enterSharedMode(shared) {
+  // Neutralise une éventuelle action « Annuler » en attente (sa closure
+  // référence l'ancien state) et remet le formulaire à zéro avant de
+  // remplacer l'état par la liste partagée.
+  hideSnackbar();
+  resetForm();
   sharedMode = true;
   state = {
     gifts: shared.gifts,
@@ -1675,8 +1698,11 @@ function importSharedList() {
   mergeMasterLists(sharedRecipients, "recipients");
   mergeMasterLists(sharedLocations, "locations");
   const result = importGiftsArray(sharedGifts);
-  renderManagedLists();
   if (!result.imported) {
+    // Aucun cadeau ajouté : importGiftsArray n'a rien re-rendu, mais des
+    // noms/lieux ont pu être fusionnés — on rafraîchit filtres et listes.
+    renderFilters();
+    renderManagedLists();
     showMessage("Ces cadeaux sont déjà dans votre liste.");
   } else {
     showMessage(`${result.imported} cadeau·x ajouté·s à votre liste.`);
@@ -1708,11 +1734,20 @@ function reloadStateFromStorage() {
   } catch (e) {
     console.error("Synchronisation des listes impossible", e);
   }
-  if (state.editingId && !state.gifts.some((gift) => gift.id === state.editingId)) {
+  // Une édition en cours dans cet onglet a priorité : on ne reconstruit pas
+  // les selects du formulaire (cela effacerait la saisie non enregistrée),
+  // sauf si le cadeau édité a disparu (supprimé depuis un autre onglet).
+  const editingStillExists = state.editingId && state.gifts.some((gift) => gift.id === state.editingId);
+  if (state.editingId && !editingStillExists) {
     resetForm();
   }
   renderFilters();
-  renderManagedLists();
+  if (!editingStillExists) {
+    renderManagedLists();
+  } else {
+    renderTagList(recipientTagList, state.recipients, "recipients");
+    renderTagList(locationTagList, state.locations, "locations");
+  }
   renderGiftList();
   renderDashboard();
 }
@@ -1897,9 +1932,13 @@ function importGiftData(rawText) {
     return { imported: 0, skipped: 0 };
   }
 
+  // Délimiteur déterminé une seule fois d'après l'en-tête : une valeur
+  // contenant un point-virgule ne doit pas faire basculer le découpage.
+  const delimiter = detectDelimiter(rows[0]);
+
   const rawGifts = rows.slice(1).map((row) => {
     if (!row.trim()) return null;
-    const cells = splitRow(row);
+    const cells = splitRow(row, delimiter);
     // Les 3 premières colonnes sont requises ; les statuts sont optionnels.
     if (cells.length < 3) return null;
     const [recipient = "", location = "", giftName = "", priceRaw = "", purchaseRaw = "", deliveryRaw = "", wrapRaw = ""] = cells;
@@ -2071,16 +2110,29 @@ async function shareSummary() {
 }
 
 /**
+ * Choisit le délimiteur d'un fichier d'après sa ligne d'en-tête : tabulation
+ * (TSV), sinon le séparateur le plus fréquent entre « ; » (CSV français) et
+ * « , ». Déterminé une fois pour tout le fichier afin qu'une valeur contenant
+ * un séparateur ne décale pas les colonnes des autres lignes.
+ */
+function detectDelimiter(headerRow) {
+  const header = headerRow || "";
+  if (header.includes("\t")) return "\t";
+  const semis = (header.match(/;/g) || []).length;
+  const commas = (header.match(/,/g) || []).length;
+  return semis >= commas && semis > 0 ? ";" : ",";
+}
+
+/**
  * Découpe une ligne CSV/TSV en conservant les cellules vides (une cellule
  * vide ne doit pas décaler les colonnes) et en gérant les champs entre
- * guillemets ("" = guillemet échappé). Délimiteur : tabulation, sinon
- * point-virgule (CSV français), sinon virgule.
+ * guillemets ("" = guillemet échappé). Le délimiteur est fourni par
+ * detectDelimiter (constant sur tout le fichier).
  */
-function splitRow(row) {
-  if (row.includes("\t")) {
+function splitRow(row, delimiter = detectDelimiter(row)) {
+  if (delimiter === "\t") {
     return row.split("\t").map((cell) => cell.trim());
   }
-  const delimiter = row.includes(";") ? ";" : ",";
   const cells = [];
   let current = "";
   let inQuotes = false;
